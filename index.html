@@ -1,0 +1,1453 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>無限概念筆記 Pro v3.6 (Magic Wand Cut & Edit)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/ag-psd@14.0.0/dist/bundle.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
+
+        body {
+            font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f2f2f7;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+            background-repeat: repeat;
+            background-position: center;
+        }
+
+        /* Canvas & UI Layers */
+        #canvas-layer { position: absolute; top: 0; left: 0; z-index: 1; touch-action: none; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+
+        /* Notes */
+        .note-element {
+            position: absolute; transform-origin: 0 0; pointer-events: auto; display: flex; flex-direction: column;
+            min-width: 50px; background: transparent; border: 1px solid transparent; transition: background 0.2s, border 0.2s;
+        }
+        .note-element:hover, .note-element.selected, .note-element:focus-within {
+            border: 1px dashed rgba(0,0,0,0.3); background: rgba(255,255,255,0.2);
+        }
+        .note-header {
+            height: 28px; opacity: 0; background: rgba(255,255,255,0.9); display: flex; align-items: center; gap: 4px;
+            padding: 0 4px; cursor: grab; border-radius: 4px 4px 0 0; transition: opacity 0.2s;
+            backdrop-filter: blur(4px); border: 1px solid rgba(0,0,0,0.05);
+        }
+        .note-element:hover .note-header, .note-element.selected .note-header, .note-element:focus-within .note-header { opacity: 1; }
+        .note-content {
+            width: 100%; background: transparent; border: none; outline: none; resize: none; font-family: inherit;
+            color: #1d1d1f; line-height: 1.5; padding: 4px; min-height: 30px; overflow: hidden; pointer-events: auto;
+        }
+        .note-input-num { width: 40px; font-size: 11px; padding: 2px; border: 1px solid #ddd; border-radius: 4px; text-align: center; }
+        .note-input-color { width: 20px; height: 20px; padding: 0; border: none; background: none; cursor: pointer; }
+        .note-btn-close { margin-left: auto; color: #ef4444; cursor: pointer; padding: 2px; }
+        .note-btn-close:hover { background: #fee2e2; border-radius: 4px; }
+        .font-select { font-size: 10px; padding: 2px; border-radius: 4px; border: 1px solid #ddd; background: rgba(255,255,255,0.8); cursor: pointer; max-width: 80px; pointer-events: auto; }
+
+        /* Layer Panel */
+        .layer-panel {
+            position: fixed; top: 80px; right: 16px; width: 200px;
+            background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(15px);
+            border-radius: 12px; padding: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            display: flex; flex-direction: column; gap: 6px; z-index: 90; pointer-events: auto; border: 1px solid rgba(0,0,0,0.1);
+            transition: transform 0.3s ease, opacity 0.3s;
+        }
+        .layer-panel.minimized { width: 40px; height: 40px; padding: 0; overflow: hidden; align-items: center; justify-content: center; cursor: pointer; }
+        .layer-panel.minimized .layer-content { display: none; }
+        .layer-panel.minimized .layer-toggle-icon { display: block; }
+        .layer-toggle-icon { display: none; }
+        .layer-list { display: flex; flex-direction: column-reverse; gap: 4px; overflow-y: auto; max-height: 350px; }
+        .layer-item { display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 6px; cursor: pointer; font-size: 12px; border: 1px solid transparent; background: rgba(255,255,255,0.5); }
+        .layer-item.active { background: #f1f1f1; border-color: #ddd; font-weight: 600; box-shadow: inset 2px 0 0 #1d1d1f; }
+        .layer-header-row { display: flex; align-items: center; gap: 6px; width: 100%; }
+        .layer-actions-row { display: flex; align-items: center; gap: 4px; justify-content: flex-end; width: 100%; border-top: 1px solid #eee; padding-top: 4px; margin-top: 2px;}
+        .layer-icon-btn { padding: 2px; border-radius: 4px; color: #666; transition: 0.2s; }
+        .layer-icon-btn:hover { background: #e5e5e5; color: #000; }
+        .layer-vis-btn.hidden-layer, .layer-lock-btn.locked-layer { color: #aaa; }
+        .layer-lock-btn.locked-layer { color: #ef4444; }
+        .layer-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .layer-opacity-row { display: flex; align-items: center; gap: 4px; padding-left: 2px; }
+        .layer-opacity-slider { width: 100%; height: 3px; -webkit-appearance: none; background: #ddd; border-radius: 2px; }
+        .layer-opacity-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 10px; background: #888; border-radius: 50%; cursor: pointer; }
+
+        /* Toolbar */
+        .toolbar-container { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 100; pointer-events: auto; }
+        .toolbar { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(20px); border-radius: 20px; padding: 6px 10px; display: flex; gap: 6px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15); border: 1px solid rgba(255,255,255,0.5); align-items: center; }
+        .tool-btn { width: 40px; height: 40px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #555; transition: all 0.2s; background: transparent; border: none; cursor: pointer; position: relative; }
+        .tool-btn:hover { background: rgba(0,0,0,0.05); }
+        .tool-btn.active { background: #1d1d1f; color: #fff; }
+        .brush-type-icon { position: absolute; bottom: 2px; right: 2px; font-size: 8px; color: #555; background: rgba(255,255,255,0.8); padding: 1px 2px; border-radius: 2px; pointer-events: none; }
+
+        .tool-group { position: relative; }
+        .sub-tool-popup { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: white; border-radius: 8px; padding: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); display: none; flex-direction: column; gap: 4px; margin-bottom: 12px; width: 40px; z-index: 110; }
+        .sub-tool-popup::after { content: ''; position: absolute; top: 100%; left: 0; width: 100%; height: 15px; background: transparent; }
+        .tool-group:hover .sub-tool-popup, .sub-tool-popup:hover { display: flex; }
+        .tool-options-panel { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); padding: 6px 12px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 8px; width: auto; min-width: 200px; }
+        
+        /* Menus */
+        .menu-dropdown { position: absolute; top: 100%; left: 0; background: white; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); padding: 4px; display: none; flex-direction: column; gap: 2px; z-index: 120; min-width: 140px; margin-top: 8px; }
+        .top-btn-group:hover .menu-dropdown { display: flex; }
+        .menu-item { padding: 8px 12px; font-size: 13px; color: #333; cursor: pointer; border-radius: 6px; display: flex; align-items: center; gap: 8px; }
+        .menu-item:hover { background: #f2f2f7; }
+
+        /* BG Panel */
+        .bg-panel { position: absolute; top: 100%; left: 0; background: white; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); padding: 12px; display: none; flex-direction: column; gap: 10px; z-index: 120; width: 220px; margin-top: 8px; }
+        .top-btn-group.bg-group:hover .bg-panel, .bg-panel:hover { display: flex; }
+
+        /* Context Menu */
+        .context-menu { position: absolute; background: white; padding: 4px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); display: flex; gap: 2px; flex-direction: column; z-index: 110; pointer-events: auto; min-width: 120px; }
+        .ctx-item { padding: 6px 10px; font-size: 12px; cursor: pointer; border-radius: 4px; display: flex; gap: 6px; align-items: center; }
+        .ctx-item:hover { background: #f5f5f7; }
+        .ctx-item.danger { color: #dc2626; }
+        .ctx-item.danger:hover { background: #fee2e2; }
+        
+        /* Modals */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); z-index: 200; display: none; align-items: center; justify-content: center; }
+        .modal-box { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); width: 320px; display: flex; flex-direction: column; gap: 12px; }
+        .modal-header { font-weight: bold; color: #333; margin-bottom: 4px; }
+        .modal-row { display: flex; justify-content: space-between; align-items: center; }
+        .modal-input { border: 1px solid #ddd; padding: 4px 8px; border-radius: 6px; width: 80px; text-align: right; }
+        .modal-btn { padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; }
+        .btn-primary { background: #1d1d1f; color: white; }
+        .btn-secondary { background: #f2f2f7; color: #555; }
+        
+        /* Image Adjust Modal (Bottom Sheet Style) */
+        #img-adjust-modal {
+            align-items: flex-end; /* Align to bottom */
+            padding-bottom: 80px; /* Space for toolbar */
+            background: transparent;
+            pointer-events: none; /* Let clicks pass through outside box */
+        }
+        #img-adjust-modal .modal-box {
+            width: 340px;
+            margin: 0 auto;
+            box-shadow: 0 -4px 30px rgba(0,0,0,0.15);
+            pointer-events: auto;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(0,0,0,0.1);
+        }
+
+        /* Color Picker */
+        .color-picker-ps { position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%); width: 240px; background: white; border-radius: 12px; padding: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); display: none; flex-direction: column; gap: 10px; z-index: 101; }
+        .color-picker-ps.show { display: flex; }
+        .ps-body { display: flex; gap: 10px; height: 180px; }
+        .ps-sb-box { flex: 1; position: relative; background: red; cursor: crosshair; border-radius: 4px; overflow: hidden; }
+        .ps-h-strip { width: 24px; position: relative; background: linear-gradient(to bottom, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%); cursor: ns-resize; border-radius: 4px; }
+        .ps-eyedropper-btn { display: flex; align-items: center; justify-content: center; padding: 8px; background: #f5f5f7; border-radius: 6px; cursor: pointer; font-size: 12px; gap: 6px; font-weight: 500; color: #555; }
+        .ps-eyedropper-btn:hover { background: #e5e5e5; }
+        .ps-eyedropper-btn.active { background: #1d1d1f; color: white; }
+    </style>
+</head>
+<body>
+
+    <canvas id="canvas-layer"></canvas>
+    <div id="ui-layer"></div>
+
+    <!-- Export Modal -->
+    <div class="modal-overlay" id="export-modal">
+        <div class="modal-box">
+            <div class="modal-header">Export Image</div>
+            <div class="text-xs text-gray-500 mb-2">Set export size (defaults to content bounds).</div>
+            <div class="modal-row"><span class="text-sm">Width (px)</span><input type="number" id="exp-w" class="modal-input" value="2000"></div>
+            <div class="modal-row"><span class="text-sm">Height (px)</span><input type="number" id="exp-h" class="modal-input" value="1500"></div>
+            <div class="modal-row"><span class="text-sm">Format</span><select id="exp-fmt" class="modal-input" style="width: 100px;"><option value="image/jpeg">JPG</option><option value="image/png">PNG</option><option value="image/webp">WEBP</option></select></div>
+            <div class="flex gap-2 mt-2"><button class="modal-btn btn-secondary flex-1" onclick="document.getElementById('export-modal').style.display='none'">Cancel</button><button class="modal-btn btn-primary flex-1" onclick="performExport()">Export</button></div>
+        </div>
+    </div>
+
+    <!-- Image Adjust Modal -->
+    <div class="modal-overlay" id="img-adjust-modal">
+        <div class="modal-box">
+            <div class="modal-header">Image Adjustment</div>
+            <div class="modal-row">
+                <span class="text-sm">Hue</span>
+                <input type="range" id="adj-hue" min="0" max="360" value="0" class="w-32">
+            </div>
+            <div class="modal-row">
+                <span class="text-sm">Saturation</span>
+                <input type="range" id="adj-sat" min="0" max="200" value="100" class="w-32">
+            </div>
+            <div class="modal-row">
+                <span class="text-sm">Contrast</span>
+                <input type="range" id="adj-con" min="0" max="200" value="100" class="w-32">
+            </div>
+            <div class="flex gap-2 mt-2">
+                <button class="modal-btn btn-secondary flex-1" onclick="closeImgAdjust(false)">Cancel</button>
+                <button class="modal-btn btn-primary flex-1" onclick="closeImgAdjust(true)">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top Info / Main Menu -->
+    <div class="fixed top-4 left-4 flex gap-3 z-50 pointer-events-auto">
+        <div class="relative top-btn-group">
+            <div class="bg-white/90 backdrop-blur px-3 py-2 rounded-lg shadow-sm border border-gray-200 flex items-center gap-2 cursor-pointer hover:bg-white transition-colors">
+                <i data-lucide="folder-open" size="18"></i><span class="text-xs font-medium text-gray-600">File</span>
+            </div>
+            <div class="menu-dropdown">
+                <div class="menu-item" onclick="document.getElementById('psd-input').click()"><i data-lucide="upload" size="14"></i> Open PSD</div>
+                <div class="menu-item" onclick="savePSD()"><i data-lucide="download" size="14"></i> Save PSD</div>
+                <div class="menu-item" onclick="showExportDialog()"><i data-lucide="image" size="14"></i> Export Image</div>
+            </div>
+            <input type="file" id="psd-input" accept=".psd" class="hidden">
+        </div>
+        <div class="relative top-btn-group bg-group">
+            <div class="bg-white/90 backdrop-blur px-3 py-2 rounded-lg shadow-sm border border-gray-200 flex items-center gap-2 cursor-pointer hover:bg-white transition-colors">
+                <i data-lucide="image" size="18"></i><span class="text-xs font-medium text-gray-600">Background</span>
+            </div>
+            <div class="bg-panel">
+                <div class="flex flex-col gap-2">
+                    <span class="text-xs font-bold text-gray-500">Color</span>
+                    <input type="color" id="bg-color-picker" class="w-full h-8 cursor-pointer border rounded" value="#f2f2f7" onchange="updateBgColor(this.value)">
+                </div>
+                <div class="w-full h-px bg-gray-100"></div>
+                <div class="flex flex-col gap-2">
+                    <span class="text-xs font-bold text-gray-500">Texture</span>
+                    <button class="menu-item border border-gray-200 justify-center" onclick="document.getElementById('bg-tex-input').click()"><i data-lucide="upload-cloud" size="14"></i> Upload Texture</button>
+                    <input type="file" id="bg-tex-input" accept="image/*" class="hidden" onchange="uploadBgTexture(this)">
+                    <div class="flex items-center justify-between"><span class="text-xs text-gray-500">Scale</span><input type="range" min="10" max="500" value="100" class="w-24" oninput="updateBgScale(this.value)"></div>
+                    <button class="text-xs text-red-500 hover:bg-red-50 p-1 rounded text-center" onclick="clearBgTexture()">Remove Texture</button>
+                </div>
+            </div>
+        </div>
+        <div class="bg-white/90 backdrop-blur px-3 py-2 rounded-lg shadow-sm border border-gray-200 flex items-center gap-3 text-xs text-gray-500">
+            <span id="zoom-text">100%</span><div class="w-px h-3 bg-gray-300"></div><span id="status-text">Select (V)</span>
+        </div>
+    </div>
+
+    <!-- Layer Panel -->
+    <div class="layer-panel" id="layer-panel">
+        <div class="flex justify-between items-center pb-1 border-b border-gray-100 layer-content">
+            <span class="text-xs font-bold text-gray-500">LAYERS</span>
+            <div class="flex gap-1">
+                <button onclick="moveSelectionToActive()" title="Move Selection" class="p-1 hover:bg-gray-100 rounded text-gray-600"><i data-lucide="arrow-down-to-line" width="14"></i></button>
+                <button id="btn-add-layer" onclick="addLayer()" class="p-1 hover:bg-gray-100 rounded text-gray-600"><i data-lucide="plus" width="14"></i></button>
+                <button onclick="toggleLayerPanel()" class="p-1 hover:bg-gray-100 rounded text-gray-600"><i data-lucide="minus" width="14"></i></button>
+            </div>
+        </div>
+        <div class="layer-list layer-content" id="layer-list"></div>
+        <div class="layer-toggle-icon w-full h-full flex items-center justify-center" onclick="toggleLayerPanel()"><i data-lucide="layers" width="20"></i></div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar-container">
+        <div class="tool-options-panel" id="option-panel" style="display:none;">
+            <div id="opt-size-group" class="flex items-center gap-2">
+                <span class="text-xs font-medium text-gray-500 w-8" id="option-label">Size</span>
+                <input type="range" id="option-slider" min="1" max="100" value="3" class="w-24">
+                <span class="text-xs font-mono text-gray-400 w-6 text-right" id="option-val">3</span>
+            </div>
+            <div id="opt-angle-group" class="flex items-center gap-2 border-l border-gray-200 pl-2 ml-2" style="display:none;">
+                <span class="text-xs font-medium text-gray-500 w-8">Angle</span>
+                <input type="range" id="angle-slider" min="0" max="180" value="0" class="w-24">
+                <span class="text-xs font-mono text-gray-400 w-8 text-right" id="angle-val">0°</span>
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <button class="tool-btn" id="tool-select" title="選擇 (V)"><i data-lucide="mouse-pointer-2" size="20"></i></button>
+            <div class="tool-group relative" id="group-lasso">
+                <button class="tool-btn" id="tool-lasso-group" title="選區 (M)"><i data-lucide="wand" size="20"></i></button>
+                <div class="sub-tool-popup">
+                    <button class="tool-btn" onclick="window.setTool('lasso-free')" title="套索"><i data-lucide="lasso" size="16"></i></button>
+                    <button class="tool-btn" onclick="window.setTool('lasso-rect')" title="矩形"><i data-lucide="box-select" size="16"></i></button>
+                    <button class="tool-btn" onclick="window.setTool('magic-wand')" title="魔棒"><i data-lucide="wand" size="16"></i></button>
+                </div>
+            </div>
+            <div class="w-px h-4 bg-gray-300 mx-1"></div>
+            <div class="tool-group relative" id="group-guide">
+                <button class="tool-btn" id="tool-guide-btn" title="輔助"><i data-lucide="ruler" size="20"></i></button>
+                <div class="sub-tool-popup" style="width: 200px; left: 0; transform: translateX(-40%);">
+                    <div class="flex gap-1 justify-center p-1">
+                        <button class="tool-btn w-8 h-8" onclick="setGuide('none')"><i data-lucide="x" size="14"></i></button>
+                        <button class="tool-btn w-8 h-8" onclick="setGuide('grid')"><i data-lucide="grid-3x3" size="14"></i></button>
+                        <button class="tool-btn w-8 h-8" onclick="setGuide('linear')"><i data-lucide="move-diagonal" size="14"></i></button>
+                    </div>
+                    <div class="text-xs text-center text-gray-400 border-t border-gray-100 pt-1">Perspective</div>
+                    <div class="flex gap-1 justify-center p-1">
+                        <button class="tool-btn w-8 h-8" onclick="setGuide('perspective-1')">1P</button>
+                        <button class="tool-btn w-8 h-8" onclick="setGuide('perspective-2')">2P</button>
+                        <button class="tool-btn w-8 h-8" onclick="setGuide('perspective-3')">3P</button>
+                        <button class="tool-btn w-8 h-8" onclick="setGuide('perspective-fish')"><i data-lucide="eye" size="14"></i></button>
+                    </div>
+                </div>
+            </div>
+            <div class="w-px h-4 bg-gray-300 mx-1"></div>
+            <button class="tool-btn active" id="tool-pen" title="畫筆 (B)"><i data-lucide="pen-tool" size="20"></i><div id="brush-indicator" class="brush-type-icon">Pen</div></button>
+            <button class="tool-btn" id="tool-text" title="文字 (T)"><i data-lucide="type" size="20"></i></button>
+            <button class="tool-btn" id="tool-eraser" title="橡皮擦 (E)"><i data-lucide="eraser" size="20"></i></button>
+            <div class="w-px h-4 bg-gray-300 mx-1"></div>
+            <button class="tool-btn" id="btn-color"><div id="color-indicator" class="w-5 h-5 rounded bg-black border border-gray-300"></div></button>
+            <button class="tool-btn" id="btn-image" title="導入圖片" onclick="document.getElementById('file-input').click()"><i data-lucide="image-plus" size="20"></i></button>
+            <input type="file" id="file-input" accept="image/*" class="hidden">
+            <div class="w-px h-4 bg-gray-300 mx-1"></div>
+            <button class="tool-btn" id="btn-undo"><i data-lucide="undo-2" size="18"></i></button>
+            <button class="tool-btn" id="btn-redo"><i data-lucide="redo-2" size="18"></i></button>
+        </div>
+    </div>
+
+    <!-- Selection Context Menu -->
+    <div id="sel-context-menu" class="context-menu" style="display: none;">
+        <div class="ctx-item" onclick="groupSelection()"><i data-lucide="group" size="14"></i> 打組 (Ctrl+G)</div>
+        <div class="ctx-item" onclick="ungroupSelection()"><i data-lucide="ungroup" size="14"></i> 解組 (Ctrl+Shift+G)</div>
+        <div id="ctx-btn-color" class="ctx-item" style="display:none;" onclick="triggerGroupRecolor()"><i data-lucide="palette" size="14"></i> 改色</div>
+        <div id="ctx-btn-adjust" class="ctx-item" style="display:none;" onclick="openImgAdjust()"><i data-lucide="sliders" size="14"></i> 調整</div>
+        <div class="ctx-item danger" onclick="deleteSelection()"><i data-lucide="trash-2" size="14"></i> 刪除 (Del)</div>
+    </div>
+
+    <!-- Color Picker (PS Style with Eyedropper) -->
+    <div class="color-picker-ps" id="ps-picker">
+        <div class="ps-body">
+            <div class="ps-sb-box" id="ps-sb-area">
+                <div style="position:absolute;inset:0;background:linear-gradient(to right,#fff,transparent)"></div>
+                <div style="position:absolute;inset:0;background:linear-gradient(to top,#000,transparent)"></div>
+                <div id="ps-sb-cursor" style="position:absolute;width:10px;height:10px;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);top:0;left:100%;pointer-events:none;box-shadow:0 0 2px rgba(0,0,0,0.5);"></div>
+            </div>
+            <div class="ps-h-strip" id="ps-h-strip">
+                <div id="ps-h-cursor" style="position:absolute;left:-2px;right:-2px;height:6px;border:2px solid #fff;top:0;pointer-events:none;box-shadow:0 0 2px rgba(0,0,0,0.5);"></div>
+            </div>
+        </div>
+        <div class="ps-eyedropper-btn" onclick="toggleEyedropper()">
+            <i data-lucide="pipette" size="16"></i> 吸管工具
+        </div>
+    </div>
+
+    <script>
+        // Init Lucide
+        try { lucide.createIcons(); } catch(e) { console.error("Lucide init failed", e); }
+        
+        const canvas = document.getElementById('canvas-layer');
+        const ctx = canvas.getContext('2d', { alpha: true });
+        const bufferCanvas = document.createElement('canvas');
+        const bufferCtx = bufferCanvas.getContext('2d', { alpha: true });
+        const uiLayer = document.getElementById('ui-layer');
+
+        const FONTS = ['Noto Sans TC', 'Arial', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana', 'Impact', 'Comic Sans MS'];
+        const BRUSH_TYPES = [
+            { id: 'pen', name: '鋼筆', label: 'Pen' },
+            { id: 'pencil', name: '鉛筆', label: 'Pencil' },
+            { id: 'watercolor', name: '水彩', label: 'Water' },
+            { id: 'calligraphy', name: '毛筆', label: 'Calli' },
+            { id: 'fill', name: '填充', label: 'Fill' }
+        ];
+        const LASSO_TOOLS = ['lasso-free', 'lasso-rect', 'magic-wand'];
+
+        // --- APP STATE ---
+        const app = {
+            mode: 'pen',
+            lastBrushId: 'pen',
+            brushIndex: 0,
+            lassoIndex: 0,
+            hsv: { h: 0, s: 0, v: 0 }, 
+            colorString: '#000000',
+            toolSize: { pen: 3, pencil: 2, watercolor: 15, calligraphy: 5, eraser: 30, fill: 1 },
+            magicWand: { tolerance: 32 },
+            showOptionSlider: false,
+            camera: { x: 0, y: 0, zoom: 1 },
+            guides: { active: 'none', vps: [], angle: 0 },
+            background: { color: '#f2f2f7', texture: null, scale: 100 },
+            isDrawing: false, isPanning: false, isSelecting: false, isTransforming: false, isDraggingVP: -1,
+            isPickingColor: false, isPickingHue: false,
+            lastPos: { x: 0, y: 0, sx: -100, sy: -100, time: 0 }, 
+            lastPointDrawn: null, 
+            isShiftPending: false, 
+            shiftStartPos: null,
+            selectionPath: [],
+            layers: [
+                { id: 'layer-text', name: '文字', visible: true, locked: false, opacity: 1.0 },
+                { id: 'layer-image', name: '图片', visible: true, locked: false, opacity: 1.0 },
+                { id: 'layer-stroke', name: '画笔', visible: true, locked: false, opacity: 1.0 }
+            ],
+            activeLayerId: 'layer-stroke',
+            strokes: [], notes: [], images: [],
+            selection: [], transformBox: null, activeHandle: null,
+            transformSnapshot: null, pixelSelection: null, 
+            historyStack: [], historyIndex: -1,
+            tempImgAdjust: { h: 0, s: 100, con: 100 },
+            isSpacePressed: false
+        };
+
+        // --- CORE FUNCTIONS ---
+
+        function updateToolUI() {
+            document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+            
+            const isBrush = BRUSH_TYPES.find(b => b.id === app.mode);
+            const isLasso = LASSO_TOOLS.includes(app.mode);
+            
+            if (isBrush) {
+                document.getElementById('tool-pen').classList.add('active');
+                const indicator = document.getElementById('brush-indicator');
+                if(indicator) indicator.innerText = isBrush.label;
+            } else if (isLasso) {
+                document.getElementById('tool-lasso-group').classList.add('active');
+            } else {
+                const map = { 'eraser': 'tool-eraser', 'text': 'tool-text', 'select': 'tool-select', 'hand': 'tool-hand' };
+                const btnId = map[app.mode];
+                if(btnId) document.getElementById(btnId)?.classList.add('active');
+            }
+
+            // Options Panel
+            const optionPanel = document.getElementById('option-panel');
+            const sizeGroup = document.getElementById('opt-size-group');
+            const angleGroup = document.getElementById('opt-angle-group');
+            
+            if (app.showOptionSlider) {
+                optionPanel.style.display = 'flex';
+                sizeGroup.style.display = 'flex';
+                angleGroup.style.display = 'none';
+                
+                const slider = document.getElementById('option-slider');
+                const label = document.getElementById('option-label');
+                const valDisplay = document.getElementById('option-val');
+
+                if (app.mode === 'magic-wand') {
+                    label.innerText = "Tol";
+                    slider.max = 100;
+                    slider.value = app.magicWand.tolerance;
+                } else {
+                    label.innerText = "Size";
+                    slider.max = 100;
+                    slider.value = app.toolSize[app.mode] || 3;
+                    
+                    if ((app.guides.active === 'linear' || app.guides.active === 'grid') && isBrush) {
+                        angleGroup.style.display = 'flex';
+                        const angSlider = document.getElementById('angle-slider');
+                        angSlider.value = Math.round(app.guides.angle * (180/Math.PI));
+                        document.getElementById('angle-val').innerText = angSlider.value + "°";
+                    }
+                }
+                valDisplay.innerText = slider.value;
+            } else {
+                optionPanel.style.display = 'none';
+            }
+
+            // Cursor Handling
+            canvas.style.cursor = 'none';
+            if (app.mode === 'select' || app.mode === 'text') canvas.style.cursor = 'default';
+            if (app.mode === 'hand' || app.isSpacePressed) canvas.style.cursor = 'grab';
+            if (app.isPanning) canvas.style.cursor = 'grabbing';
+            if (LASSO_TOOLS.includes(app.mode) || app.mode === 'eyedropper') canvas.style.cursor = 'crosshair';
+            if (app.isDraggingVP >= 0) canvas.style.cursor = 'move';
+            if (app.activeHandle && !app.isPanning) {
+               if(app.activeHandle === 'tl' || app.activeHandle === 'br') canvas.style.cursor = 'nwse-resize';
+               else if(app.activeHandle === 'tr' || app.activeHandle === 'bl') canvas.style.cursor = 'nesw-resize';
+               else canvas.style.cursor = 'move';
+            }
+
+            const guideBtn = document.getElementById('tool-guide-btn');
+            if(guideBtn) {
+                if (app.guides.active !== 'none') guideBtn.classList.add('active');
+                else guideBtn.classList.remove('active');
+            }
+            
+            document.getElementById('status-text').innerText = app.mode.toUpperCase();
+        }
+
+        // Color Logic
+        function hsvToRgb(h, s, v) {
+            let r, g, b, i, f, p, q, t;
+            if (arguments.length === 1) { s = h.s, v = h.v, h = h.h; }
+            h /= 360; i = Math.floor(h * 6); f = h * 6 - i; p = v * (1 - s); q = v * (1 - f * s); t = v * (1 - (1 - f) * s);
+            switch (i % 6) { case 0: r = v, g = t, b = p; break; case 1: r = q, g = v, b = p; break; case 2: r = p, g = v, b = t; break; case 3: r = p, g = q, b = v; break; case 4: r = t, g = p, b = v; break; case 5: r = v, g = p, b = q; break; }
+            return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+        }
+        function rgbToHex(r, g, b) { return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1); }
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+        }
+        function updateColorFromSB(x, y, rect) {
+            app.hsv.s = Math.max(0, Math.min(1, x / rect.width));
+            app.hsv.v = Math.max(0, Math.min(1, 1 - y / rect.height));
+            updatePickerUI(); applyColor();
+        }
+        function applyColor() {
+            const rgb = hsvToRgb(app.hsv.h, app.hsv.s, app.hsv.v);
+            app.colorString = rgbToHex(rgb.r, rgb.g, rgb.b);
+            document.getElementById('color-indicator').style.backgroundColor = app.colorString;
+            // Update selection color immediately
+            if (app.selection.length > 0) {
+                window.triggerGroupRecolor();
+            }
+        }
+        function updatePickerUI() {
+            const sbBox = document.getElementById('ps-sb-area');
+            const hueRGB = hsvToRgb(app.hsv.h, 1, 1);
+            sbBox.style.backgroundColor = `rgb(${hueRGB.r},${hueRGB.g},${hueRGB.b})`;
+            const curSB = document.getElementById('ps-sb-cursor');
+            curSB.style.left = (app.hsv.s * 100) + '%';
+            curSB.style.top = ((1 - app.hsv.v) * 100) + '%';
+            const curH = document.getElementById('ps-h-cursor');
+            curH.style.top = ((app.hsv.h / 360) * 100) + '%';
+        }
+        
+        // --- MAGIC WAND & FLOOD FILL ---
+        function magicWandSelect(x, y, isAdding) {
+            // Find which image was clicked (top-most first)
+            let targetImg = null;
+            for (let i = app.images.length - 1; i >= 0; i--) {
+                const img = app.images[i];
+                if (x >= img.x && x <= img.x + img.w && y >= img.y && y <= img.y + img.h) {
+                    const layer = app.layers.find(l => l.id === img.layerId);
+                    if (layer && layer.visible && !layer.locked) {
+                        targetImg = img;
+                        break;
+                    }
+                }
+            }
+
+            if (!targetImg) return; 
+
+            // Create temp canvas to read image data
+            const w = Math.floor(targetImg.w);
+            const h = Math.floor(targetImg.h);
+            const tCanvas = document.createElement('canvas');
+            tCanvas.width = w;
+            tCanvas.height = h;
+            const tCtx = tCanvas.getContext('2d');
+            
+            if (targetImg.filters) {
+                tCtx.filter = `hue-rotate(${targetImg.filters.hue}deg) saturate(${targetImg.filters.sat}%) contrast(${targetImg.filters.con || 100}%)`;
+            }
+            tCtx.drawImage(targetImg.imgElement, 0, 0, w, h);
+            
+            const imgData = tCtx.getImageData(0, 0, w, h);
+            const data = imgData.data;
+            const tolerance = app.magicWand.tolerance;
+            
+            const lx = Math.floor(x - targetImg.x);
+            const ly = Math.floor(y - targetImg.y);
+            if (lx < 0 || lx >= w || ly < 0 || ly >= h) return;
+
+            const startPos = (ly * w + lx) * 4;
+            const startR = data[startPos], startG = data[startPos+1], startB = data[startPos+2], startA = data[startPos+3];
+            
+            // Re-use or Create new Visited array
+            let visited;
+            if (isAdding && app.pixelSelection && app.pixelSelection.imageId === targetImg.id) {
+                visited = app.pixelSelection.maskData; // Use existing
+            } else {
+                visited = new Uint8Array(w * h); // New
+            }
+
+            const stack = [lx, ly];
+            
+            function match(pos) {
+                const r = data[pos], g = data[pos+1], b = data[pos+2], a = data[pos+3];
+                const dist = Math.abs(r - startR) + Math.abs(g - startG) + Math.abs(b - startB) + Math.abs(a - startA);
+                return dist <= tolerance * 4; 
+            }
+
+            while (stack.length > 0) {
+                const cy = stack.pop();
+                const cx = stack.pop();
+                const idx = cy * w + cx;
+                
+                if (visited[idx]) continue;
+                visited[idx] = 1;
+                
+                const pos = idx * 4;
+                if (match(pos)) {
+                    if (cx > 0) stack.push(cx - 1, cy);
+                    if (cx < w - 1) stack.push(cx + 1, cy);
+                    if (cy > 0) stack.push(cx, cy - 1);
+                    if (cy < h - 1) stack.push(cx, cy + 1);
+                }
+            }
+            
+            // Build visual mask from visited array
+            const maskData = new Uint8ClampedArray(w * h * 4);
+            for (let i = 0; i < w * h; i++) {
+                if (visited[i]) {
+                    const pos = i * 4;
+                    maskData[pos] = 59; maskData[pos+1] = 130; maskData[pos+2] = 246; maskData[pos+3] = 100;
+                }
+            }
+
+            const mCanvas = document.createElement('canvas');
+            mCanvas.width = w; mCanvas.height = h;
+            mCanvas.getContext('2d').putImageData(new ImageData(maskData, w, h), 0, 0);
+            
+            app.pixelSelection = {
+                imageId: targetImg.id,
+                maskCanvas: mCanvas,
+                x: targetImg.x,
+                y: targetImg.y,
+                maskData: visited
+            };
+            requestRender();
+        }
+
+        // --- NEW: FLOAT SELECTION (CUT) ---
+        function floatPixelSelection() {
+            if (!app.pixelSelection) return;
+            const sel = app.pixelSelection;
+            const srcImg = app.images.find(i => i.id === sel.imageId);
+            if (!srcImg) return;
+
+            const w = Math.floor(srcImg.w);
+            const h = Math.floor(srcImg.h);
+            const visited = sel.maskData;
+
+            // 1. Determine bounds of selection
+            let minX = w, minY = h, maxX = 0, maxY = 0;
+            let hasPixels = false;
+            for(let y=0; y<h; y++) {
+                for(let x=0; x<w; x++) {
+                    if (visited[y*w+x]) {
+                        if(x < minX) minX = x;
+                        if(x > maxX) maxX = x;
+                        if(y < minY) minY = y;
+                        if(y > maxY) maxY = y;
+                        hasPixels = true;
+                    }
+                }
+            }
+            if (!hasPixels) return;
+
+            const floatW = maxX - minX + 1;
+            const floatH = maxY - minY + 1;
+
+            // 2. Extract pixels to new canvas & Clear from source
+            const srcCanvas = document.createElement('canvas');
+            srcCanvas.width = w; srcCanvas.height = h;
+            const sCtx = srcCanvas.getContext('2d');
+            sCtx.drawImage(srcImg.imgElement, 0, 0, w, h);
+            const srcData = sCtx.getImageData(0, 0, w, h);
+            
+            const floatCanvas = document.createElement('canvas');
+            floatCanvas.width = floatW; floatCanvas.height = floatH;
+            const fCtx = floatCanvas.getContext('2d');
+            const floatData = fCtx.createImageData(floatW, floatH);
+
+            for(let y=0; y<h; y++) {
+                for(let x=0; x<w; x++) {
+                    const idx = y*w+x;
+                    if(visited[idx]) {
+                        const sPos = idx * 4;
+                        // Copy to float
+                        const fx = x - minX;
+                        const fy = y - minY;
+                        const fPos = (fy * floatW + fx) * 4;
+                        floatData.data[fPos] = srcData.data[sPos];
+                        floatData.data[fPos+1] = srcData.data[sPos+1];
+                        floatData.data[fPos+2] = srcData.data[sPos+2];
+                        floatData.data[fPos+3] = srcData.data[sPos+3];
+                        
+                        // Clear source
+                        srcData.data[sPos+3] = 0; 
+                    }
+                }
+            }
+            
+            // Update Source
+            sCtx.putImageData(srcData, 0, 0);
+            const newSrcImg = new Image();
+            newSrcImg.src = srcCanvas.toDataURL();
+            srcImg.imgElement = newSrcImg;
+            srcImg.src = newSrcImg.src;
+
+            // Create Floater
+            fCtx.putImageData(floatData, 0, 0);
+            const floatImg = new Image();
+            floatImg.onload = () => {
+                const id = Date.now();
+                const newObj = {
+                    id: id,
+                    x: srcImg.x + minX,
+                    y: srcImg.y + minY,
+                    w: floatW,
+                    h: floatH,
+                    src: floatCanvas.toDataURL(),
+                    imgElement: floatImg,
+                    layerId: srcImg.layerId,
+                    filters: { hue: 0, sat: 100, con: 100 }
+                };
+                app.images.push(newObj);
+                
+                // Select the new object and switch to transform mode
+                app.pixelSelection = null;
+                clearSelection();
+                addToSelection(newObj);
+                updateTransformBox();
+                app.isTransforming = true;
+                app.activeHandle = 'body'; // Immediately grab
+                // Recalculate snapshot for immediate drag
+                const r = canvas.getBoundingClientRect();
+                // Mock event pos if needed, or wait for next move
+            };
+            floatImg.src = floatCanvas.toDataURL();
+            
+            requestRender();
+        }
+
+        function deletePixelSelection() {
+            if (!app.pixelSelection) return;
+            const sel = app.pixelSelection;
+            const srcImg = app.images.find(i => i.id === sel.imageId);
+            if (!srcImg) return;
+
+            const w = Math.floor(srcImg.w);
+            const h = Math.floor(srcImg.h);
+            
+            const srcCanvas = document.createElement('canvas');
+            srcCanvas.width = w; srcCanvas.height = h;
+            const sCtx = srcCanvas.getContext('2d');
+            sCtx.drawImage(srcImg.imgElement, 0, 0, w, h);
+            const srcData = sCtx.getImageData(0, 0, w, h);
+            
+            const visited = sel.maskData;
+            for(let i=0; i<w*h; i++) {
+                if(visited[i]) srcData.data[i*4+3] = 0;
+            }
+            sCtx.putImageData(srcData, 0, 0);
+            
+            const newImg = new Image();
+            newImg.onload = () => {
+                srcImg.imgElement = newImg;
+                app.pixelSelection = null;
+                requestRender();
+            };
+            newImg.src = srcCanvas.toDataURL();
+            srcImg.src = newImg.src;
+        }
+
+        // --- INPUT HANDLING ---
+        
+        function getWorldPos(e) {
+            const r = canvas.getBoundingClientRect();
+            const cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+            const cy = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
+            return { x: (cx - app.camera.x)/app.camera.zoom, y: (cy - app.camera.y)/app.camera.zoom, sx: cx, sy: cy };
+        }
+
+        canvas.addEventListener('pointerdown', handlePointerDown);
+        window.addEventListener('pointermove', handlePointerMove);
+        window.addEventListener('pointerup', handlePointerUp);
+        canvas.addEventListener('wheel', handleWheel, { passive: false });
+        
+        document.getElementById('btn-color').onclick = (e) => {
+            const p = document.getElementById('ps-picker');
+            p.classList.toggle('show');
+            if(p.classList.contains('show')) updatePickerUI();
+        };
+
+        function handlePointerDown(e) {
+            if (e.target !== canvas) return;
+            const pos = getWorldPos(e);
+            
+            if (app.mode === 'hand' || app.isSpacePressed || e.button === 1) {
+                app.isPanning = true;
+                app.lastPos = pos;
+                updateToolUI();
+                return;
+            }
+            
+            if (app.mode === 'magic-wand') {
+                magicWandSelect(pos.x, pos.y, e.shiftKey);
+                return;
+            }
+
+            if (app.guides.active.startsWith('perspective')) {
+                for (let i=0; i<app.guides.vps.length; i++) {
+                    const vp = app.guides.vps[i];
+                    const dist = Math.hypot(vp.x - pos.x, vp.y - pos.y);
+                    if (dist < 20 / app.camera.zoom) {
+                        app.isDraggingVP = i;
+                        updateToolUI();
+                        return;
+                    }
+                }
+            }
+
+            if (app.mode === 'select') {
+                // If we have a pixel selection active and user clicks inside/on it, 
+                // we want to float it. Since pixel selection is just a mask on an image,
+                // we assume clicking anywhere triggers the float if pixelSelection exists.
+                // Or to be precise, check if click is inside the mask.
+                if (app.pixelSelection && !e.shiftKey) {
+                    // Check if click is inside mask bounds (simplified)
+                    const ps = app.pixelSelection;
+                    if (pos.x >= ps.x && pos.x <= ps.x + ps.maskCanvas.width && 
+                        pos.y >= ps.y && pos.y <= ps.y + ps.maskCanvas.height) {
+                        floatPixelSelection();
+                        // Then fall through to normal transform start logic because floatPixelSelection selects the new object
+                        // We need to re-initiate the drag
+                        const floatItem = app.selection[0]; // The new item
+                        if (floatItem) {
+                            app.transformBox = getSelectionAABB(app.selection);
+                            app.isTransforming = true;
+                            app.activeHandle = 'body';
+                            app.lastPos = pos;
+                            app.transformSnapshot = {
+                                startPos: pos,
+                                startBox: { ...app.transformBox },
+                                items: app.selection.map(i => ({ ref: i, x: i.x, y: i.y, w: i.w, h: i.h }))
+                            };
+                            return;
+                        }
+                    } else {
+                        // Clicked outside pixel selection -> clear it
+                        app.pixelSelection = null;
+                        requestRender();
+                    }
+                }
+
+                if (app.transformBox && app.selection.length > 0) {
+                    const hit = hitTest(pos);
+                    if (hit && (hit === 'tl' || hit === 'tr' || hit === 'bl' || hit === 'br' || hit === 'body')) {
+                        app.isTransforming = true;
+                        app.activeHandle = hit;
+                        app.lastPos = pos;
+                        app.transformSnapshot = {
+                            startPos: pos,
+                            startBox: { ...app.transformBox },
+                            items: app.selection.map(i => ({ ref: i, x: i.x, y: i.y, w: i.w, h: i.h, fontSize: i.fontSize, pts: i.points?JSON.parse(JSON.stringify(i.points)):null }))
+                        };
+                        return;
+                    }
+                }
+                
+                const hitItem = hitTest(pos);
+                if (hitItem && typeof hitItem === 'object') {
+                    if (!e.shiftKey) clearSelection();
+                    addToSelection(hitItem);
+                    if(hitItem.groupId) {
+                        const group = getAllInGroup(hitItem.groupId);
+                        group.forEach(g => addToSelection(g));
+                    }
+                    updateTransformBox();
+                    app.isTransforming = true;
+                    app.activeHandle = 'body';
+                    app.lastPos = pos;
+                    app.transformSnapshot = {
+                        startPos: pos,
+                        startBox: { ...app.transformBox },
+                        items: app.selection.map(i => ({ ref: i, x: i.x, y: i.y, w: i.w, h: i.h, fontSize: i.fontSize, pts: i.points?JSON.parse(JSON.stringify(i.points)):null }))
+                    };
+                } else {
+                    if (!e.shiftKey) clearSelection();
+                }
+                return;
+            }
+
+            const isBrush = BRUSH_TYPES.find(b => b.id === app.mode);
+            if (isBrush || app.mode === 'eraser') {
+                const effectiveLayerId = getTargetLayerId('stroke');
+                app.isDrawing = true;
+                
+                if (e.shiftKey && app.lastPointDrawn) {
+                     const newStroke = {
+                        id: Date.now(),
+                        type: app.mode,
+                        color: app.mode==='eraser' ? '#000' : app.colorString,
+                        size: app.toolSize[app.mode] || 3,
+                        points: [app.lastPointDrawn, {x: pos.x, y: pos.y}],
+                        layerId: effectiveLayerId,
+                        isEraser: app.mode === 'eraser'
+                    };
+                    app.strokes.push(newStroke);
+                    app.lastPointDrawn = {x: pos.x, y: pos.y}; 
+                    requestRender();
+                    return; 
+                }
+
+                const newStroke = {
+                    id: Date.now(),
+                    type: app.mode,
+                    color: app.mode==='eraser' ? '#000' : app.colorString,
+                    size: app.toolSize[app.mode] || 3,
+                    points: [{x: pos.x, y: pos.y}],
+                    layerId: effectiveLayerId,
+                    isEraser: app.mode === 'eraser'
+                };
+                app.strokes.push(newStroke);
+                app.lastPointDrawn = {x: pos.x, y: pos.y};
+                requestRender();
+            }
+            
+            if (LASSO_TOOLS.includes(app.mode) || app.mode === 'fill') {
+                app.isSelecting = true;
+                app.selectionPath = [{x: pos.x, y: pos.y}];
+                if (!e.shiftKey) clearSelection(); 
+            }
+            
+            if (app.mode === 'text') {
+                createNote(pos.x, pos.y);
+                window.setTool('select');
+            }
+        }
+
+        function handlePointerMove(e) {
+            let pos = getWorldPos(e);
+            app.lastPos = pos;
+
+            if (app.isPanning) {
+                app.camera.x += e.movementX; 
+                app.camera.y += e.movementY;
+                requestRender();
+                return;
+            }
+            
+            if (app.isDraggingVP >= 0) {
+                app.guides.vps[app.isDraggingVP] = { x: pos.x, y: pos.y };
+                requestRender();
+                return;
+            }
+
+            if (app.isTransforming && app.transformSnapshot) {
+                const dx = pos.x - app.transformSnapshot.startPos.x;
+                const dy = pos.y - app.transformSnapshot.startPos.y;
+                const snap = app.transformSnapshot;
+                
+                if (app.activeHandle === 'body') {
+                    snap.items.forEach(item => {
+                        item.ref.x = item.x + dx;
+                        item.ref.y = item.y + dy;
+                        if(item.ref.points) {
+                            item.ref.points = item.pts.map(p => ({x: p.x + dx, y: p.y + dy}));
+                            delete item.ref.aabb;
+                        }
+                    });
+                } else {
+                    const sb = snap.startBox;
+                    let newX = sb.x, newY = sb.y, newW = sb.w, newH = sb.h;
+                    
+                    // 1. Calculate raw dimensions based on drag
+                    let rawW = sb.w;
+                    let rawH = sb.h;
+
+                    if (app.activeHandle === 'br') { rawW += dx; rawH += dy; }
+                    else if (app.activeHandle === 'bl') { rawW -= dx; rawH += dy; }
+                    else if (app.activeHandle === 'tr') { rawW += dx; rawH -= dy; }
+                    else if (app.activeHandle === 'tl') { rawW -= dx; rawH -= dy; }
+
+                    // 2. Apply Shift Constraint (Aspect Ratio Lock)
+                    if (e.shiftKey) {
+                        const ratio = sb.w / sb.h;
+                        // Use the dimension with the larger relative change to drive the other
+                        if (Math.abs(rawW / sb.w) > Math.abs(rawH / sb.h)) {
+                            rawH = rawW / ratio;
+                        } else {
+                            rawW = rawH * ratio;
+                        }
+                    }
+
+                    // 3. Min size constraint
+                    if(rawW < 10) rawW = 10;
+                    if(rawH < 10) rawH = 10;
+                    
+                    newW = rawW;
+                    newH = rawH;
+
+                    // 4. Recalculate X/Y based on the fixed anchor point of the handle
+                    if (app.activeHandle === 'br') { 
+                        newX = sb.x; 
+                        newY = sb.y; 
+                    } else if (app.activeHandle === 'bl') { 
+                        newX = sb.x + sb.w - newW; // Anchor Right
+                        newY = sb.y; 
+                    } else if (app.activeHandle === 'tr') { 
+                        newX = sb.x; 
+                        newY = sb.y + sb.h - newH; // Anchor Bottom
+                    } else if (app.activeHandle === 'tl') { 
+                        newX = sb.x + sb.w - newW; // Anchor Bottom-Right
+                        newY = sb.y + sb.h - newH; 
+                    }
+
+                    const scaleX = newW / sb.w;
+                    const scaleY = newH / sb.h;
+
+                    snap.items.forEach(item => {
+                        const relX = item.x - sb.x; const relY = item.y - sb.y;
+                        item.ref.x = newX + relX * scaleX;
+                        item.ref.y = newY + relY * scaleY;
+                        if (item.ref.w !== undefined) { item.ref.w = item.w * scaleX; item.ref.h = item.h * scaleY; }
+                        if (item.ref.points) {
+                            item.ref.points = item.pts.map(p => ({
+                                x: newX + (p.x - sb.x) * scaleX,
+                                y: newY + (p.y - sb.y) * scaleY
+                            }));
+                            delete item.ref.aabb;
+                        }
+                        if(item.ref.fontSize !== undefined) { item.ref.fontSize = Math.max(8, item.fontSize * ((scaleX + scaleY) / 2)); }
+                    });
+                }
+                snap.items.forEach(item => {
+                    if(item.ref.content !== undefined) {
+                        const el = document.getElementById('note-'+item.ref.id);
+                        if(el) {
+                           const sx = item.ref.x * app.camera.zoom + app.camera.x;
+                           const sy = item.ref.y * app.camera.zoom + app.camera.y;
+                           el.style.transform = `translate(${sx}px, ${sy}px) scale(${app.camera.zoom})`;
+                        }
+                    }
+                });
+                updateTransformBox();
+                requestRender();
+                return;
+            }
+
+            if (app.isDrawing && app.strokes.length > 0) {
+                const stroke = app.strokes[app.strokes.length - 1];
+                if (e.shiftKey && stroke.points.length > 0) {
+                    const start = stroke.points[0];
+                    const dx = pos.x - start.x;
+                    const dy = pos.y - start.y;
+                    const angle = Math.atan2(dy, dx);
+                    const snapAngle = Math.round(angle / (Math.PI/4)) * (Math.PI/4);
+                    const dist = Math.hypot(dx, dy);
+                    pos.x = start.x + Math.cos(snapAngle) * dist;
+                    pos.y = start.y + Math.sin(snapAngle) * dist;
+                }
+                const dist = Math.hypot(pos.x - app.lastPointDrawn.x, pos.y - app.lastPointDrawn.y);
+                if (dist > 2 / app.camera.zoom) {
+                    stroke.points.push({x: pos.x, y: pos.y});
+                    app.lastPointDrawn = pos;
+                    requestRender();
+                }
+            }
+
+            if (app.isSelecting) {
+                app.selectionPath.push({x: pos.x, y: pos.y});
+                requestRender();
+            }
+
+            if(app.mode === 'select' && !app.isTransforming) {
+               const hit = hitTest(pos);
+               app.activeHandle = (typeof hit === 'string') ? hit : null;
+               updateToolUI();
+            }
+            requestRender();
+        }
+
+        function handlePointerUp(e) {
+            if (app.isPanning) { app.isPanning = false; updateToolUI(); return; }
+            if (app.isDraggingVP >= 0) { app.isDraggingVP = -1; return; }
+            if (app.isTransforming) { app.isTransforming = false; saveState(); return; }
+            
+            if (app.isDrawing) {
+                app.isDrawing = false;
+                const s = app.strokes[app.strokes.length-1];
+                if(s) s.aabb = getStrokeAABB(s.points);
+                saveState();
+            }
+
+            if (app.isSelecting) {
+                app.isSelecting = false;
+                performSelection(); 
+                app.selectionPath = [];
+                requestRender();
+            }
+        }
+        
+        function performSelection() {
+            if (app.selectionPath.length < 2) return;
+            const isPointInPoly = (pt, poly) => {
+                let inside = false;
+                for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+                    const xi = poly[i].x, yi = poly[i].y;
+                    const xj = poly[j].x, yj = poly[j].y;
+                    const intersect = ((yi > pt.y) !== (yj > pt.y)) && (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi);
+                    if (intersect) inside = !inside;
+                }
+                return inside;
+            };
+            const isRectIntersect = (itemBox, selBox) => {
+                return !(itemBox.x > selBox.x + selBox.w || itemBox.x + itemBox.w < selBox.x || itemBox.y > selBox.y + selBox.h || itemBox.y + itemBox.h < selBox.y);
+            };
+
+            const itemsToSelect = [];
+            const allItems = [...app.strokes, ...app.images, ...app.notes]; 
+            
+            if (app.mode === 'lasso-rect') {
+                const start = app.selectionPath[0];
+                const end = app.selectionPath[app.selectionPath.length-1];
+                const minX = Math.min(start.x, end.x);
+                const minY = Math.min(start.y, end.y);
+                const w = Math.abs(end.x - start.x);
+                const h = Math.abs(end.y - start.y);
+                const selBox = {x: minX, y: minY, w, h};
+                allItems.forEach(item => {
+                    const layer = app.layers.find(l=>l.id===item.layerId);
+                    if(!layer || !layer.visible || layer.locked) return;
+                    const b = getBounds(item);
+                    if (isRectIntersect(b, selBox)) itemsToSelect.push(item);
+                });
+            } else if (app.mode === 'lasso-free') {
+                allItems.forEach(item => {
+                    const layer = app.layers.find(l=>l.id===item.layerId);
+                    if(!layer || !layer.visible || layer.locked) return;
+                    const b = getBounds(item);
+                    const center = { x: b.x + b.w/2, y: b.y + b.h/2 };
+                    if (isPointInPoly(center, app.selectionPath)) itemsToSelect.push(item);
+                });
+            }
+            
+            itemsToSelect.forEach(i => addToSelection(i));
+            if (itemsToSelect.length > 0) {
+                window.setTool('select');
+                updateTransformBox();
+            }
+        }
+
+        function handleWheel(e) {
+            e.preventDefault();
+            const zoomSpeed = 0.001;
+            const newZoom = Math.max(0.1, Math.min(5, app.camera.zoom * (1 - e.deltaY * zoomSpeed)));
+            const r = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - r.left;
+            const mouseY = e.clientY - r.top;
+            const worldX = (mouseX - app.camera.x) / app.camera.zoom;
+            const worldY = (mouseY - app.camera.y) / app.camera.zoom;
+            app.camera.x = mouseX - worldX * newZoom;
+            app.camera.y = mouseY - worldY * newZoom;
+            app.camera.zoom = newZoom;
+            document.getElementById('zoom-text').innerText = Math.round(newZoom * 100) + '%';
+            updateNotesDOM();
+            requestRender();
+        }
+
+        // Keys
+        window.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+            if (e.code === 'Space' && !app.isSpacePressed) { app.isSpacePressed = true; updateToolUI(); }
+            if (e.key === 'v') window.setTool('select');
+            if (e.key === 'b') window.setTool('pen');
+            if (e.key === 'e') window.setTool('eraser');
+            if (e.key === 't') window.setTool('text');
+            if (e.key === 'h') window.setTool('hand');
+            if (e.key === 'm') window.setTool('lasso-group'); 
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (app.pixelSelection) deletePixelSelection();
+                else deleteSelection();
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                if (e.shiftKey) document.getElementById('btn-redo').click();
+                else document.getElementById('btn-undo').click();
+                e.preventDefault();
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
+                e.preventDefault();
+                if(e.shiftKey) ungroupSelection(); else groupSelection();
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'Space') { app.isSpacePressed = false; updateToolUI(); }
+        });
+        
+        // --- RESTORED FUNCTIONS ---
+        
+        function cycleBrush() { 
+            app.brushIndex = (app.brushIndex + 1) % BRUSH_TYPES.length; 
+            window.setTool(BRUSH_TYPES[app.brushIndex].id); 
+        }
+
+        function cycleLasso() { 
+            app.lassoIndex = (app.lassoIndex + 1) % LASSO_TOOLS.length; 
+            window.setTool(LASSO_TOOLS[app.lassoIndex]); 
+        }
+
+        function toggleEyedropper() { 
+            window.setTool('eyedropper'); 
+            document.querySelector('.ps-eyedropper-btn').classList.add('active'); 
+        }
+
+        function updateNotesDOM() { 
+            document.querySelectorAll('.note-element').forEach(el => { 
+                const id = parseInt(el.id.split('-')[1]); 
+                if(!app.notes.find(n => n.id === id)) el.remove(); 
+            }); 
+            app.notes.forEach(note => { 
+                let el = document.getElementById('note-'+note.id); 
+                if(!el) { 
+                    el = document.createElement('div'); el.className = 'note-element'; el.id = 'note-'+note.id; 
+                    el.innerHTML = `<div class="note-header"><input type="number" class="note-input-num" value="${note.fontSize}" onchange="updateFont(parseInt(this.value), ${note.id})" title="Font Size"><input type="color" class="note-input-color" value="${note.color || '#000000'}" onchange="updateNoteColor(this.value, ${note.id})" title="Text Color"><select class="font-select" onchange="updateFontFamily(this.value, ${note.id})">${FONTS.map(f => `<option value="${f}">${f.split(' ')[0]}</option>`).join('')}</select><div class="note-btn-close" onclick="deleteNote(${note.id})"><i data-lucide="x" width="12"></i></div></div><textarea class="note-content" placeholder="Type here..."></textarea>`; 
+                    uiLayer.appendChild(el); 
+                    const txt = el.querySelector('textarea'); 
+                    txt.oninput = (e) => { note.content = e.target.value; txt.style.height='auto'; txt.style.height=txt.scrollHeight+'px'; }; 
+                    txt.onkeydown = (e) => { if(e.key === 'Escape') { e.target.blur(); } };
+                    txt.onblur = (e) => { if (!note.content || note.content.trim() === '') { deleteNote(note.id); } };
+                    el.addEventListener('pointerdown', e => { 
+                        if(e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return; 
+                        const l = app.layers.find(ly=>ly.id===note.layerId); 
+                        if(l && l.locked) return; 
+                        if(app.mode === 'select') { 
+                            e.stopPropagation(); 
+                            if(e.shiftKey) addToSelection(note); 
+                            else if(!app.selection.includes(note)) { clearSelection(); addToSelection(note); } 
+                            updateTransformBox(); 
+                            app.isTransforming = true; app.activeHandle = 'body'; 
+                            app.transformSnapshot = { startPos: getWorldPos(e), startBox: { ...app.transformBox }, items: app.selection.map(i => ({ ref: i, x: i.x, y: i.y, w: i.w, h: i.h, fontSize: i.fontSize })) }; 
+                        } 
+                    }); 
+                    try { lucide.createIcons(); } catch(e){}
+                } 
+                const sx = note.x * app.camera.zoom + app.camera.x; 
+                const sy = note.y * app.camera.zoom + app.camera.y; 
+                el.style.transform = `translate(${sx}px, ${sy}px) scale(${app.camera.zoom})`; 
+                
+                const layer = app.layers.find(l=>l.id===note.layerId);
+                el.style.display = (layer && layer.visible) ? 'flex' : 'none'; 
+                el.style.opacity = (layer && layer.opacity !== undefined) ? layer.opacity : 1; 
+                el.style.pointerEvents = (layer && layer.locked) ? 'none' : 'auto';
+                
+                const txt = el.querySelector('textarea'); 
+                if(txt.value !== note.content) txt.value = note.content; 
+                txt.style.fontFamily = note.font; 
+                txt.style.fontSize = note.fontSize + 'px'; 
+                txt.style.color = note.color || '#000000'; 
+                el.querySelector('select').value = note.font; 
+                el.querySelector('.note-input-num').value = note.fontSize; 
+                el.querySelector('.note-input-color').value = note.color || '#000000';
+            }); 
+        }
+
+        function createNote(x, y) { 
+            const effectiveLayerId = getTargetLayerId('text'); 
+            const note = { id: Date.now(), x, y, content: '', font: 'Noto Sans TC', fontSize: 16, color: '#000000', layerId: effectiveLayerId }; 
+            app.notes.push(note); saveState(); requestRender(); 
+            setTimeout(() => { const el = document.getElementById('note-'+note.id); if(el) el.querySelector('textarea').focus(); }, 50); 
+        }
+
+        function getStrokeAABB(points) { 
+            let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity; 
+            for(let p of points){if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y;} 
+            return {x:minX,y:minY,w:maxX-minX,h:maxY-minY}; 
+        }
+        
+        function getBounds(item) { 
+            if(item.points) return item.aabb||getStrokeAABB(item.points); 
+            if(item.content!==undefined) { 
+                const el=document.getElementById('note-'+item.id); 
+                if(el){const r=el.getBoundingClientRect(); return {x:(r.left-app.camera.x)/app.camera.zoom,y:(r.top-app.camera.y)/app.camera.zoom,w:r.width/app.camera.zoom,h:r.height/app.camera.zoom};} 
+                return {x:item.x,y:item.y,w:100,h:50}; 
+            } 
+            return {x:item.x,y:item.y,w:item.w,h:item.h}; 
+        }
+
+        function getSelectionAABB(items) { 
+            if(items.length===0) return null; 
+            let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity; 
+            items.forEach(i=>{const b=getBounds(i); if(b.x<minX)minX=b.x;if(b.x+b.w>maxX)maxX=b.x+b.w;if(b.y<minY)minY=b.y;if(b.y+b.h>maxY)maxY=b.y+b.h;}); 
+            return {x:minX,y:minY,w:maxX-minX,h:maxY-minY}; 
+        }
+
+        function getAllItemsAABB() { const all=[...app.images,...app.strokes,...app.notes]; if(all.length===0) return {x:0,y:0,w:800,h:600}; return getSelectionAABB(all); }
+        function getAllInGroup(gid) { return [...app.strokes,...app.images,...app.notes].filter(x=>x.groupId===gid); }
+        function clearSelection() { app.selection = []; app.transformBox = null; app.notes.forEach(n => document.getElementById('note-'+n.id)?.classList.remove('selected')); document.getElementById('sel-context-menu').style.display = 'none'; app.pixelSelection = null; }
+        function addToSelection(item) { if(!app.selection.includes(item)) { app.selection.push(item); if(item.content !== undefined) document.getElementById('note-'+item.id)?.classList.add('selected'); } }
+        
+        function updateTransformBox() { 
+            app.transformBox = getSelectionAABB(app.selection); 
+            const menu = document.getElementById('sel-context-menu'); 
+            const hasGroup = app.selection.some(i => i.groupId);
+            const hasImg = app.selection.some(i => i.src);
+            if(app.selection.length > 0 && app.transformBox) { 
+                const b = app.transformBox; 
+                const sx = (b.x + b.w/2)*app.camera.zoom + app.camera.x; const sy = b.y * app.camera.zoom + app.camera.y; 
+                menu.style.display = 'flex'; menu.style.left = sx + 'px'; menu.style.top = (sy - 10) + 'px'; menu.style.transform = 'translate(-50%, -100%)'; 
+                document.getElementById('ctx-btn-color').style.display = hasGroup ? 'flex' : 'none';
+                document.getElementById('ctx-btn-adjust').style.display = hasImg ? 'flex' : 'none';
+            } else { menu.style.display = 'none'; } 
+        }
+
+        function hitTest(pos) {
+            if(app.transformBox) { const b = app.transformBox; const hs = 10/app.camera.zoom; if(Math.abs(pos.x - b.x) < hs && Math.abs(pos.y - b.y) < hs) return 'tl'; if(Math.abs(pos.x - (b.x+b.w)) < hs && Math.abs(pos.y - b.y) < hs) return 'tr'; if(Math.abs(pos.x - b.x) < hs && Math.abs(pos.y - (b.y+b.h)) < hs) return 'bl'; if(Math.abs(pos.x - (b.x+b.w)) < hs && Math.abs(pos.y - (b.y+b.h)) < hs) return 'br'; if(pos.x >= b.x && pos.x <= b.x+b.w && pos.y >= b.y && pos.y <= b.y+b.h) return 'body'; }
+            for(let i=app.images.length-1; i>=0; i--) { const item = app.images[i]; const layer = app.layers.find(l=>l.id===item.layerId); if(!layer || !layer.visible || layer.locked) continue; if(pos.x>=item.x && pos.x<=item.x+item.w && pos.y>=item.y && pos.y<=item.y+item.h) return item; }
+            for(let i=app.strokes.length-1; i>=0; i--) { const s = app.strokes[i]; const layer = app.layers.find(l=>l.id===s.layerId); if(!layer || !layer.visible || layer.locked) continue; if(!s.aabb) s.aabb = getStrokeAABB(s.points); const b = s.aabb; if(pos.x>=b.x-5 && pos.x<=b.x+b.w+5 && pos.y>=b.y-5 && pos.y<=b.y+b.h+5) return s; }
+            return null;
+        }
+
+        function saveState() { const s={s:app.strokes,n:app.notes,i:app.images,l:app.layers}; app.historyStack=app.historyStack.slice(0,app.historyIndex+1); app.historyStack.push(JSON.stringify(s)); app.historyIndex++; if(app.historyStack.length>20){app.historyStack.shift();app.historyIndex--;} }
+        
+        function restore(json) { const s=JSON.parse(json); app.strokes=s.s; app.notes=s.n; app.layers=s.l; app.images=s.i.map(raw=>{const img=new Image(); img.src=raw.src; return {...raw, imgElement:img};}); renderLayerList(); requestRender(); }
+        
+        document.getElementById('btn-undo').onclick = () => { if(app.historyIndex>0) { app.historyIndex--; restore(app.historyStack[app.historyIndex]); } };
+        document.getElementById('btn-redo').onclick = () => { if(app.historyIndex<app.historyStack.length-1) { app.historyIndex++; restore(app.historyStack[app.historyIndex]); } };
+
+        function renderLayerList() {
+            const list = document.getElementById('layer-list'); list.innerHTML = '';
+            app.layers.forEach((l, idx) => {
+                const div = document.createElement('div'); div.className = `layer-item ${l.id===app.activeLayerId?'active':''}`;
+                div.onclick = (e) => { if(e.target.closest('.layer-icon-btn') || e.target.closest('.layer-vis-btn') || e.target.closest('.layer-lock-btn') || e.target.closest('input')) return; app.activeLayerId=l.id; renderLayerList(); };
+                div.innerHTML = `<div class="layer-header-row"><div class="layer-vis-btn ${!l.visible?'hidden-layer':''}" onclick="toggleVis('${l.id}')"><i data-lucide="${l.visible?'eye':'eye-off'}" width="14"></i></div><div class="layer-lock-btn ${l.locked?'locked-layer':''}" onclick="toggleLock('${l.id}')"><i data-lucide="${l.locked?'lock':'unlock'}" width="14"></i></div><span class="layer-name">${l.name}</span></div><div class="layer-opacity-row"><span style="font-size:9px; color:#999;">Op</span><input type="range" class="layer-opacity-slider" min="0" max="1" step="0.01" value="${l.opacity !== undefined ? l.opacity : 1}" oninput="updateLayerOpacity('${l.id}', this.value)"></div><div class="layer-actions-row"><div class="layer-icon-btn" onclick="moveLayer('${l.id}', 1)"><i data-lucide="arrow-up" width="12"></i></div><div class="layer-icon-btn" onclick="moveLayer('${l.id}', -1)"><i data-lucide="arrow-down" width="12"></i></div><div class="layer-icon-btn" onclick="mergeLayerDown('${l.id}')"><i data-lucide="arrow-down-to-line" width="12"></i></div>${(l.id !== 'layer-text' && l.id !== 'layer-image' && l.id !== 'layer-stroke') ? `<div class="layer-icon-btn hover:text-red-500" onclick="deleteLayer('${l.id}')"><i data-lucide="trash" width="12"></i></div>` : ''}</div>`;
+                list.appendChild(div);
+            });
+            try { lucide.createIcons(); } catch(e){}
+        }
+        
+        function getTargetLayerId(type) { let targetName=''; if(type==='stroke')targetName='画笔'; else if(type==='image')targetName='图片'; else if(type==='text')targetName='文字'; const target=app.layers.find(l=>l.name===targetName); if(target&&!target.locked)return target.id; return app.activeLayerId; }
+
+        // --- GLOBAL WINDOW BINDINGS ---
+        window.updateFont = (size, id) => { const n=app.notes.find(x=>x.id===id); if(n){n.fontSize=size; requestRender(); saveState();} };
+        window.updateFontFamily = (font, id) => { const n=app.notes.find(x=>x.id===id); if(n){n.font=font; requestRender(); saveState();} };
+        window.updateNoteColor = (color, id) => { const n=app.notes.find(x=>x.id===id); if(n){n.color=color; requestRender(); saveState();} };
+        window.deleteNote = (id) => { app.notes=app.notes.filter(x=>x.id!==id); clearSelection(); requestRender(); saveState(); };
+        window.deleteSelection = () => {
+            const unlockedSelection = app.selection.filter(item => { const l = app.layers.find(ly => ly.id === item.layerId); return l && !l.locked; });
+            app.strokes = app.strokes.filter(x => !unlockedSelection.includes(x)); app.images = app.images.filter(x => !unlockedSelection.includes(x)); app.notes = app.notes.filter(x => !unlockedSelection.includes(x));
+            clearSelection(); saveState(); requestRender();
+        };
+        window.groupSelection = () => { if(app.selection.length < 1) return; const gid = Date.now(); app.selection.forEach(i => i.groupId = gid); saveState(); };
+        window.ungroupSelection = () => { app.selection.forEach(i => delete i.groupId); saveState(); };
+        window.triggerGroupRecolor = () => { if (!app.selection.length) return; const newColor = app.colorString; app.selection.forEach(item => { if (item.points) item.color = newColor; if (item.content !== undefined) window.updateNoteColor(newColor, item.id); }); requestRender(); saveState(); document.getElementById('sel-context-menu').style.display='none'; };
+        window.openImgAdjust = () => { const img = app.selection.find(i => i.src); if(!img) return; const f = img.filters || { hue: 0, sat: 100, con: 100 }; document.getElementById('adj-hue').value = f.hue; document.getElementById('adj-sat').value = f.sat; document.getElementById('adj-con').value = f.con || 100; document.getElementById('img-adjust-modal').style.display = 'flex'; const preview = () => { app.tempImgAdjust = { hue: document.getElementById('adj-hue').value, sat: document.getElementById('adj-sat').value, con: document.getElementById('adj-con').value }; img.filters = app.tempImgAdjust; requestRender(); }; document.getElementById('adj-hue').oninput = preview; document.getElementById('adj-sat').oninput = preview; document.getElementById('adj-con').oninput = preview; };
+        window.closeImgAdjust = (apply) => { document.getElementById('img-adjust-modal').style.display = 'none'; const img = app.selection.find(i => i.src); if(img && !apply) { /* Reset logic omitted */ } saveState(); };
+        window.moveLayer = (id, dir) => { const idx = app.layers.findIndex(l => l.id === id); if ((dir === 1 && idx === app.layers.length - 1) || (dir === -1 && idx === 0)) return; const temp = app.layers[idx]; app.layers[idx] = app.layers[idx + dir]; app.layers[idx + dir] = temp; renderLayerList(); requestRender(); saveState(); };
+        window.mergeLayerDown = (id) => { const idx = app.layers.findIndex(l => l.id === id); if (idx <= 0) return; const target = app.layers[idx - 1]; [...app.strokes, ...app.images, ...app.notes].forEach(item => { if(item.layerId === id) item.layerId = target.id; }); app.layers.splice(idx, 1); if(app.activeLayerId === id) app.activeLayerId = target.id; renderLayerList(); requestRender(); saveState(); };
+        window.toggleVis = (id) => { const l=app.layers.find(x=>x.id===id); if(l){l.visible=!l.visible; renderLayerList(); requestRender(); saveState();} };
+        window.toggleLock = (id) => { const l=app.layers.find(x=>x.id===id); if(l){l.locked=!l.locked; renderLayerList(); requestRender(); saveState();} };
+        window.updateLayerOpacity = (id, val) => { const l=app.layers.find(x=>x.id===id); if(l){l.opacity=parseFloat(val); requestRender();} };
+        window.deleteLayer = (id) => { if(app.layers.length <= 1) return; if(confirm('Delete Layer?')) { app.layers = app.layers.filter(l => l.id !== id); app.strokes = app.strokes.filter(s => s.layerId !== id); app.images = app.images.filter(i => i.layerId !== id); app.notes = app.notes.filter(n => n.layerId !== id); if(app.activeLayerId === id) app.activeLayerId = app.layers[0].id; renderLayerList(); requestRender(); saveState(); } };
+        window.addLayer = () => { const id = 'layer-' + Date.now(); app.layers.push({ id, name: 'Layer ' + (app.layers.length + 1), visible: true, locked: false, opacity: 1.0 }); app.activeLayerId = id; renderLayerList(); saveState(); };
+        window.moveSelectionToActive = () => { const target = app.layers.find(l=>l.id===app.activeLayerId); if(target && target.locked) { alert('Target locked'); return; } if(app.selection.length===0) return; app.selection.forEach(i => i.layerId = app.activeLayerId); clearSelection(); saveState(); requestRender(); };
+        window.toggleLayerPanel = () => document.getElementById('layer-panel').classList.toggle('minimized');
+        window.showExportDialog = () => { const bounds = getAllItemsAABB(); const w = Math.max(800, Math.ceil(bounds.w + 100)); const h = Math.max(600, Math.ceil(bounds.h + 100)); document.getElementById('exp-w').value = w; document.getElementById('exp-h').value = h; document.getElementById('export-modal').style.display = 'flex'; };
+        
+        window.performExport = () => { const w = parseInt(document.getElementById('exp-w').value); const h = parseInt(document.getElementById('exp-h').value); const fmt = document.getElementById('exp-fmt').value; const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h; const ctx = canvas.getContext('2d'); if(app.background.texture) { const pat = ctx.createPattern(app.background.texture, 'repeat'); ctx.fillStyle = pat; ctx.save(); ctx.scale(app.background.scale/100, app.background.scale/100); ctx.fillRect(0,0, w/(app.background.scale/100), h/(app.background.scale/100)); ctx.restore(); } else { ctx.fillStyle = app.background.color; ctx.fillRect(0, 0, w, h); } const bounds = getAllItemsAABB(); const scaleX = w / (bounds.w || 1); const scaleY = h / (bounds.h || 1); const scale = Math.min(scaleX, scaleY) * 0.9; const centerX = w / 2; const centerY = h / 2; const contentCX = bounds.x + bounds.w/2; const contentCY = bounds.y + bounds.h/2; ctx.translate(centerX, centerY); ctx.scale(scale, scale); ctx.translate(-contentCX, -contentCY); const sortedLayers = [...app.layers]; sortedLayers.forEach(layer => { if(!layer.visible) return; ctx.globalAlpha = layer.opacity !== undefined ? layer.opacity : 1.0; app.images.forEach(img => { if (img.layerId === layer.id && img.imgElement) ctx.drawImage(img.imgElement, img.x, img.y, img.w, img.h); }); app.strokes.forEach(stroke => { if (stroke.layerId === layer.id) { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.save(); if(stroke.isEraser) { /* skip */ } else if(stroke.type==='fill') { ctx.fillStyle=stroke.color; ctx.beginPath(); stroke.points.forEach((p,i)=>i==0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y)); ctx.fill(); } else if(stroke.type==='pencil') { ctx.strokeStyle=stroke.color; ctx.lineWidth=stroke.size; ctx.globalAlpha=0.8 * (layer.opacity || 1); ctx.setLineDash([2,4]); ctx.shadowBlur=1; ctx.shadowColor=stroke.color; drawStroke(ctx, stroke); ctx.setLineDash([4, 2]); ctx.globalAlpha = 0.4 * (layer.opacity || 1); drawStroke(ctx, stroke); } else { ctx.strokeStyle=stroke.color; ctx.lineWidth=stroke.size; drawStroke(ctx, stroke); } ctx.restore(); } }); app.notes.forEach(note => { if(note.layerId === layer.id && note.content) { ctx.save(); ctx.font = `${note.fontSize}px ${note.font}`; ctx.fillStyle = note.color || '#000000'; ctx.textBaseline = 'top'; const lines = note.content.split('\n'); const lineHeight = note.fontSize * 1.5; lines.forEach((line, i) => { ctx.fillText(line, note.x, note.y + i * lineHeight); }); ctx.restore(); } }); ctx.globalAlpha = 1.0; }); const data = canvas.toDataURL(fmt, 0.9); const a = document.createElement('a'); a.href = data; a.download = `InfiniteNote_Export.${fmt.split('/')[1]}`; a.click(); document.getElementById('export-modal').style.display='none'; };
+        
+        window.savePSD = function() { if (typeof agPsd === 'undefined') { alert('PSD Library loading...'); return; } const width = 2000; const height = 1500; const psdChildren = []; const bgCanvas = document.createElement('canvas'); bgCanvas.width = width; bgCanvas.height = height; const bgCtx = bgCanvas.getContext('2d'); if(app.background.texture) { const pat = bgCtx.createPattern(app.background.texture, 'repeat'); bgCtx.fillStyle = pat; bgCtx.save(); bgCtx.scale(app.background.scale/100, app.background.scale/100); bgCtx.fillRect(0,0, width/(app.background.scale/100), height/(app.background.scale/100)); bgCtx.restore(); } else { bgCtx.fillStyle = app.background.color; bgCtx.fillRect(0, 0, width, height); } psdChildren.push({ name: 'Background', canvas: bgCanvas }); const sortedLayers = [...app.layers].reverse(); sortedLayers.forEach(layer => { const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d'); ctx.globalAlpha = layer.opacity !== undefined ? layer.opacity : 1.0; app.images.forEach(img => { if (img.layerId === layer.id && img.imgElement) ctx.drawImage(img.imgElement, img.x, img.y, img.w, img.h); }); app.strokes.forEach(stroke => { if (stroke.layerId === layer.id) { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.save(); if(stroke.isEraser) { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = '#000'; ctx.lineWidth = stroke.size; drawStroke(ctx, stroke); } else if(stroke.type==='fill') { ctx.fillStyle=stroke.color; ctx.beginPath(); stroke.points.forEach((p,i)=>i==0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y)); ctx.fill(); } else { ctx.strokeStyle=stroke.color; ctx.lineWidth=stroke.size; drawStroke(ctx, stroke); } ctx.restore(); } }); psdChildren.push({ name: layer.name, hidden: !layer.visible, opacity: layer.opacity !== undefined ? layer.opacity : 1.0, canvas: canvas }); }); const psd = { width: width, height: height, children: psdChildren }; const data = agPsd.writePsd(psd); const blob = new Blob([data], { type: 'application/octet-stream' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'InfiniteNote.psd'; a.click(); };
+        
+        window.setTool = function(t) {
+            const isBrush = BRUSH_TYPES.find(b=>b.id===t);
+            if(isBrush){app.mode=t;app.lastBrushId=t;app.brushIndex=BRUSH_TYPES.findIndex(b=>b.id===t);app.showOptionSlider=!app.showOptionSlider;}
+            else if(LASSO_TOOLS.includes(t)){app.mode=t;app.lassoIndex=LASSO_TOOLS.indexOf(t);app.showOptionSlider=t==='magic-wand';}
+            else if(t==='eraser'||t==='eyedropper'||t==='text'||t==='select'||t==='hand'){app.mode=t;app.showOptionSlider=t==='eraser'; if(t!=='select')clearSelection();}
+            app.isSelecting=false;app.selectionPath=[];
+            if(t!=='eyedropper')document.querySelector('.ps-eyedropper-btn').classList.remove('active');
+            updateToolUI();
+        };
+        
+        window.updateBgColor = (c) => { app.background.color = c; document.body.style.backgroundColor = c; };
+        window.uploadBgTexture = (el) => {
+            const file = el.files[0]; if(!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => { const img = new Image(); img.onload = () => { app.background.texture = img; updateBodyBackground(); }; img.src = e.target.result; };
+            reader.readAsDataURL(file); el.value = '';
+        };
+        window.updateBgScale = (val) => { app.background.scale = val; updateBodyBackground(); };
+        window.clearBgTexture = () => { app.background.texture = null; updateBodyBackground(); };
+        function updateBodyBackground() {
+            if(app.background.texture) {
+                document.body.style.backgroundImage = `url(${app.background.texture.src})`;
+                document.body.style.backgroundSize = `${app.background.scale}px`;
+            } else {
+                document.body.style.backgroundImage = 'none';
+                document.body.style.backgroundColor = app.background.color;
+            }
+        }
+
+        window.setGuide = (type) => {
+            app.guides.active = type;
+            const cx = (canvas.width/2)/app.camera.zoom; 
+            const cy = (canvas.height/2)/app.camera.zoom;
+            const w = canvas.width/app.camera.zoom;
+            const h = canvas.height/app.camera.zoom;
+            if(type === 'perspective-1') app.guides.vps = [{ x: cx - app.camera.x, y: cy - app.camera.y }];
+            else if(type === 'perspective-2') app.guides.vps = [{ x: -w + cx - app.camera.x, y: cy - app.camera.y }, { x: w*2 + cx - app.camera.x, y: cy - app.camera.y }];
+            else if(type === 'perspective-3') app.guides.vps = [{ x: -w + cx - app.camera.x, y: cy - h - app.camera.y }, { x: w*2 + cx - app.camera.x, y: cy - h - app.camera.y }, { x: cx - app.camera.x, y: cy + h*2 - app.camera.y }];
+            else if(type === 'perspective-fish') app.guides.vps = [{ x: cx - app.camera.x, y: cy - app.camera.y }];
+            updateToolUI(); requestRender();
+        };
+        
+        document.getElementById('file-input').onchange = (e) => {
+            const file = e.target.files[0]; if(!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const img = new Image();
+                img.onload = () => {
+                    const id = Date.now();
+                    // Place image at center of screen
+                    const cx = (canvas.width/2 - app.camera.x)/app.camera.zoom;
+                    const cy = (canvas.height/2 - app.camera.y)/app.camera.zoom;
+                    // Fit to screen if too large
+                    let w = img.width, h = img.height;
+                    const maxW = 500 / app.camera.zoom;
+                    if(w > maxW) { const r = maxW/w; w *= r; h *= r; }
+                    
+                    app.images.push({ id, x: cx - w/2, y: cy - h/2, w, h, src: img.src, imgElement: img, layerId: getTargetLayerId('image'), filters: { hue: 0, sat: 100, bri: 100 } });
+                    saveState(); requestRender();
+                };
+                img.src = ev.target.result;
+            };
+            reader.readAsDataURL(file); e.target.value = '';
+        };
+
+        // Event Bindings
+        document.getElementById('tool-pen').onclick = () => window.setTool(BRUSH_TYPES[app.brushIndex].id);
+        ['text','eraser','select'].forEach(t => document.getElementById('tool-'+t).onclick = () => window.setTool(t));
+        document.getElementById('tool-lasso-group').onclick = () => cycleLasso();
+        
+        document.getElementById('ps-sb-area').onpointerdown = (e) => { e.stopPropagation(); app.isPickingColor = true; updateColorFromSB(e.offsetX, e.offsetY, e.target.getBoundingClientRect()); };
+        document.getElementById('ps-h-strip').onpointerdown = (e) => { e.stopPropagation(); app.isPickingHue = true; const r = e.target.getBoundingClientRect(); app.hsv.h = Math.max(0, Math.min(360, (e.offsetY / r.height) * 360)); updatePickerUI(); applyColor(); };
+        window.addEventListener('pointermove', (e) => { if(app.isPickingColor) { const r = document.getElementById('ps-sb-area').getBoundingClientRect(); updateColorFromSB(e.clientX - r.left, e.clientY - r.top, r); } if(app.isPickingHue) { const r = document.getElementById('ps-h-strip').getBoundingClientRect(); app.hsv.h = Math.max(0, Math.min(360, ((e.clientY - r.top) / r.height) * 360)); updatePickerUI(); applyColor(); } });
+        window.addEventListener('pointerup', () => { app.isPickingColor = false; app.isPickingHue = false; });
+        document.getElementById('option-slider').oninput = (e) => { 
+            if(app.mode === 'magic-wand') app.magicWand.tolerance = parseInt(e.target.value);
+            else app.toolSize[app.mode] = parseInt(e.target.value);
+            updateToolUI(); 
+        };
+        document.getElementById('angle-slider').oninput = (e) => { app.guides.angle = parseInt(e.target.value) * (Math.PI/180); updateToolUI(); requestRender(); };
+
+        // Render Loop
+        function requestRender() { requestAnimationFrame(render); }
+        function render() {
+            if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) { canvas.width = window.innerWidth; canvas.height = window.innerHeight; bufferCanvas.width = canvas.width; bufferCanvas.height = canvas.height; }
+            ctx.clearRect(0, 0, canvas.width, canvas.height); drawGrid(); drawGuides(ctx);
+            app.layers.forEach(layer => {
+                if (!layer.visible) return;
+                bufferCtx.clearRect(0, 0, bufferCanvas.width, bufferCanvas.height); bufferCtx.save();
+                bufferCtx.globalAlpha = layer.opacity !== undefined ? layer.opacity : 1.0;
+                bufferCtx.translate(app.camera.x, app.camera.y); bufferCtx.scale(app.camera.zoom, app.camera.zoom);
+                app.images.forEach(img => { if (img.layerId === layer.id && img.imgElement?.complete) { bufferCtx.save(); if (img.filters) bufferCtx.filter = `hue-rotate(${img.filters.hue}deg) saturate(${img.filters.sat}%) brightness(${img.filters.bri* (img.filters.exp ? img.filters.exp/100 : 1)}%) contrast(${img.filters.con || 100}%)`; bufferCtx.drawImage(img.imgElement, img.x, img.y, img.w, img.h); bufferCtx.restore(); if (app.pixelSelection && app.pixelSelection.imageId === img.id && app.pixelSelection.maskCanvas) bufferCtx.drawImage(app.pixelSelection.maskCanvas, img.x, img.y, img.w, img.h); } });
+                bufferCtx.lineCap = 'round'; bufferCtx.lineJoin = 'round';
+                app.strokes.forEach(stroke => { if(stroke.layerId !== layer.id) return; bufferCtx.save(); if(stroke.isEraser) { bufferCtx.globalCompositeOperation = 'destination-out'; bufferCtx.strokeStyle = 'rgba(0,0,0,1)'; bufferCtx.lineWidth = stroke.size; drawStroke(bufferCtx, stroke); } else if (stroke.type === 'fill') { bufferCtx.fillStyle = stroke.color; bufferCtx.beginPath(); if(stroke.points.length > 0) { bufferCtx.moveTo(stroke.points[0].x, stroke.points[0].y); for(let i=1; i<stroke.points.length; i++) bufferCtx.lineTo(stroke.points[i].x, stroke.points[i].y); bufferCtx.closePath(); bufferCtx.fill(); } } else if (stroke.type === 'watercolor') { bufferCtx.globalCompositeOperation = 'multiply'; bufferCtx.globalAlpha = 0.5 * (layer.opacity||1); bufferCtx.strokeStyle = stroke.color; bufferCtx.lineWidth = stroke.size; drawStroke(bufferCtx, stroke); } else if (stroke.type === 'pencil') { bufferCtx.strokeStyle = stroke.color; bufferCtx.lineWidth = stroke.size; bufferCtx.globalAlpha = 0.8 * (layer.opacity||1); bufferCtx.setLineDash([2, 4]); bufferCtx.lineCap = 'butt'; bufferCtx.shadowBlur = 1; bufferCtx.shadowColor = stroke.color; drawStroke(bufferCtx, stroke); bufferCtx.setLineDash([4, 2]); bufferCtx.globalAlpha = 0.4 * (layer.opacity||1); drawStroke(bufferCtx, stroke); } else { bufferCtx.strokeStyle = stroke.color; bufferCtx.lineWidth = stroke.size; drawStroke(bufferCtx, stroke); } bufferCtx.restore(); });
+                bufferCtx.restore(); ctx.drawImage(bufferCanvas, 0, 0);
+            });
+            
+            // Draw Pixel Selection Mask if exists
+            if (app.pixelSelection) {
+                ctx.save();
+                ctx.globalAlpha = 0.5;
+                ctx.translate(app.camera.x, app.camera.y);
+                ctx.scale(app.camera.zoom, app.camera.zoom);
+                // Draw mask relative to image position
+                ctx.translate(app.pixelSelection.x, app.pixelSelection.y);
+                ctx.drawImage(app.pixelSelection.maskCanvas, 0, 0);
+                ctx.restore();
+            }
+
+            ctx.save(); ctx.translate(app.camera.x, app.camera.y); ctx.scale(app.camera.zoom, app.camera.zoom);
+            if(app.selection.length > 0) { ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1/app.camera.zoom; app.selection.forEach(item => { const b = getBounds(item); ctx.strokeRect(b.x, b.y, b.w, b.h); }); if(app.transformBox) { const b = app.transformBox; ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5/app.camera.zoom; ctx.setLineDash([5/app.camera.zoom, 3/app.camera.zoom]); ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.setLineDash([]); if (!app.selection.every(i => i.content !== undefined)) { ctx.fillStyle = '#fff'; const hs = 8/app.camera.zoom; const drawH = (cx, cy) => { ctx.fillRect(cx-hs/2, cy-hs/2, hs, hs); ctx.strokeRect(cx-hs/2, cy-hs/2, hs, hs); }; drawH(b.x, b.y); drawH(b.x+b.w, b.y); drawH(b.x, b.y+b.h); drawH(b.x+b.w, b.y+b.h); } } }
+            if((app.mode.startsWith('lasso') || app.mode === 'fill') && app.isSelecting && app.selectionPath.length > 0) { ctx.beginPath(); ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1/app.camera.zoom; ctx.setLineDash([4/app.camera.zoom, 4/app.camera.zoom]); if (app.mode === 'lasso-rect') { const s = app.selectionPath[0], e = app.selectionPath[app.selectionPath.length-1]; ctx.rect(s.x, s.y, e.x-s.x, e.y-s.y); } else { ctx.moveTo(app.selectionPath[0].x, app.selectionPath[0].y); for(let p of app.selectionPath) ctx.lineTo(p.x, p.y); if(app.mode === 'fill') ctx.closePath(); } ctx.stroke(); ctx.fillStyle = app.mode==='fill' ? app.colorString : 'rgba(59, 130, 246, 0.1)'; if(app.mode === 'fill') ctx.globalAlpha = 0.5; ctx.fill(); ctx.globalAlpha = 1; ctx.setLineDash([]); }
+            ctx.restore();
+            
+            const isBrush = BRUSH_TYPES.find(b => b.id === app.mode) || app.mode === 'eraser';
+            if(isBrush && app.lastPos.sx >= 0) { 
+                const { sx, sy } = app.lastPos; 
+                const size = app.toolSize[app.mode] || 3; 
+                const r = (size * app.camera.zoom)/2; 
+                ctx.beginPath(); ctx.arc(sx, sy, Math.max(2, r), 0, Math.PI*2); ctx.strokeStyle = '#888'; ctx.lineWidth = 1; ctx.stroke(); 
+            }
+            if (typeof updateNotesDOM === 'function') updateNotesDOM();
+        }
+        function drawStroke(ctx, stroke) { if(stroke.points.length > 0) { ctx.beginPath(); ctx.moveTo(stroke.points[0].x, stroke.points[0].y); for(let i=1; i<stroke.points.length-1; i++) { const mx = (stroke.points[i].x + stroke.points[i+1].x)/2; const my = (stroke.points[i].y + stroke.points[i+1].y)/2; ctx.quadraticCurveTo(stroke.points[i].x, stroke.points[i].y, mx, my); } const last = stroke.points[stroke.points.length-1]; if(stroke.points.length>1) ctx.lineTo(last.x, last.y); else ctx.lineTo(stroke.points[0].x, stroke.points[0].y); ctx.stroke(); } }
+        function drawGrid() { if (app.camera.zoom < 0.4) return; ctx.fillStyle = '#d1d1d6'; const step = 20 * app.camera.zoom; const sx = Math.floor(-app.camera.x/step)*step + app.camera.x % step; const sy = Math.floor(-app.camera.y/step)*step + app.camera.y % step; for(let x=sx-step; x<canvas.width; x+=step) for(let y=sy-step; y<canvas.height; y+=step) ctx.fillRect(x, y, 1.5, 1.5); }
+        function drawGuides(ctx) { if (app.guides.active === 'none') return; ctx.save(); ctx.translate(app.camera.x, app.camera.y); ctx.scale(app.camera.zoom, app.camera.zoom); if (app.guides.active === 'grid') { ctx.strokeStyle = 'rgba(0, 200, 255, 0.3)'; ctx.lineWidth = 1 / app.camera.zoom; const range = 2000, step = 50; const cx = (canvas.width/2 - app.camera.x)/app.camera.zoom; const cy = (canvas.height/2 - app.camera.y)/app.camera.zoom; ctx.save(); ctx.translate(cx, cy); ctx.rotate(app.guides.angle); ctx.beginPath(); for (let i = -range; i <= range; i += step) { ctx.moveTo(i, -range); ctx.lineTo(i, range); ctx.moveTo(-range, i); ctx.lineTo(range, i); } ctx.stroke(); ctx.restore(); } else if (app.guides.active.startsWith('perspective')) { const vps = app.guides.vps; ctx.lineWidth = 1 / app.camera.zoom; vps.forEach((vp, i) => { ctx.fillStyle = app.isDraggingVP === i ? 'rgba(255, 0, 0, 0.8)' : 'rgba(255, 0, 150, 0.8)'; ctx.beginPath(); ctx.arc(vp.x, vp.y, 8/app.camera.zoom, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle = 'rgba(255, 0, 150, 0.3)'; ctx.beginPath(); for(let i=0; i<24; i++) { const angle = (Math.PI*2 * i) / 24; ctx.moveTo(vp.x, vp.y); ctx.lineTo(vp.x + Math.cos(angle)*5000, vp.y + Math.sin(angle)*5000); } ctx.stroke(); }); } else if (app.guides.active === 'linear') { ctx.strokeStyle = 'rgba(0, 150, 0, 0.2)'; ctx.lineWidth = 1 / app.camera.zoom; const angle = app.guides.angle; const cx = (canvas.width/2 - app.camera.x)/app.camera.zoom; const cy = (canvas.height/2 - app.camera.y)/app.camera.zoom; ctx.beginPath(); for(let i=-10; i<=10; i++) { const offX = -Math.sin(angle) * 100 * i; const offY = Math.cos(angle) * 100 * i; ctx.moveTo(cx + offX - 5000 * Math.cos(angle), cy + offY - 5000 * Math.sin(angle)); ctx.lineTo(cx + offX + 5000 * Math.cos(angle), cy + offY + 5000 * Math.sin(angle)); } ctx.stroke(); } ctx.restore(); }
+        
+        // Final Init
+        window.setTool('pen');
+        renderLayerList();
+        saveState();
+        requestRender();
+    </script>
+</body>
+</html>
