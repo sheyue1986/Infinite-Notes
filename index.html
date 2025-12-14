@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>無限概念筆記 Pro v3.6 (Magic Wand Cut & Edit)</title>
+    <title>無限概念筆記 Pro v5.0 (CAD Select & Zen Mode)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://unpkg.com/ag-psd@14.0.0/dist/bundle.js"></script>
@@ -19,11 +19,23 @@
             user-select: none;
             background-repeat: repeat;
             background-position: center;
+            transition: background-color 0.3s;
         }
 
         /* Canvas & UI Layers */
         #canvas-layer { position: absolute; top: 0; left: 0; z-index: 1; touch-action: none; }
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; transition: opacity 0.3s; }
+
+        /* Zen Mode (Hide UI Chrome ONLY - Keep Notes/Canvas) */
+        body.zen-mode .top-btn-group,
+        body.zen-mode .layer-panel,
+        body.zen-mode .toolbar-container,
+        body.zen-mode .top-info-bar {
+            opacity: 0 !important;
+            pointer-events: none !important;
+            display: none !important;
+        }
+        /* Ensure cursor hides in Zen Mode while drawing if desired, or keep generic */
 
         /* Notes */
         .note-element {
@@ -76,7 +88,7 @@
         .layer-opacity-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 10px; background: #888; border-radius: 50%; cursor: pointer; }
 
         /* Toolbar */
-        .toolbar-container { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 100; pointer-events: auto; }
+        .toolbar-container { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 100; pointer-events: auto; transition: opacity 0.3s; }
         .toolbar { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(20px); border-radius: 20px; padding: 6px 10px; display: flex; gap: 6px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15); border: 1px solid rgba(255,255,255,0.5); align-items: center; }
         .tool-btn { width: 40px; height: 40px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #555; transition: all 0.2s; background: transparent; border: none; cursor: pointer; position: relative; }
         .tool-btn:hover { background: rgba(0,0,0,0.05); }
@@ -90,6 +102,7 @@
         .tool-options-panel { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); padding: 6px 12px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 8px; width: auto; min-width: 200px; }
         
         /* Menus */
+        .top-info-bar { position: fixed; top: 4px; left: 4px; display: flex; gap: 3px; z-index: 50; pointer-events: auto; transition: opacity 0.3s; }
         .menu-dropdown { position: absolute; top: 100%; left: 0; background: white; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); padding: 4px; display: none; flex-direction: column; gap: 2px; z-index: 120; min-width: 140px; margin-top: 8px; }
         .top-btn-group:hover .menu-dropdown { display: flex; }
         .menu-item { padding: 8px 12px; font-size: 13px; color: #333; cursor: pointer; border-radius: 6px; display: flex; align-items: center; gap: 8px; }
@@ -185,15 +198,15 @@
     </div>
 
     <!-- Top Info / Main Menu -->
-    <div class="fixed top-4 left-4 flex gap-3 z-50 pointer-events-auto">
+    <div class="top-info-bar">
         <div class="relative top-btn-group">
             <div class="bg-white/90 backdrop-blur px-3 py-2 rounded-lg shadow-sm border border-gray-200 flex items-center gap-2 cursor-pointer hover:bg-white transition-colors">
                 <i data-lucide="folder-open" size="18"></i><span class="text-xs font-medium text-gray-600">File</span>
             </div>
             <div class="menu-dropdown">
-                <div class="menu-item" onclick="document.getElementById('psd-input').click()"><i data-lucide="upload" size="14"></i> Open PSD</div>
-                <div class="menu-item" onclick="savePSD()"><i data-lucide="download" size="14"></i> Save PSD</div>
-                <div class="menu-item" onclick="showExportDialog()"><i data-lucide="image" size="14"></i> Export Image</div>
+                <div class="menu-item" onclick="document.getElementById('psd-input').click()"><i data-lucide="upload" size="14"></i> Open PSD (Ctrl+O)</div>
+                <div class="menu-item" onclick="savePSD()"><i data-lucide="download" size="14"></i> Save PSD (Ctrl+S)</div>
+                <div class="menu-item" onclick="showExportDialog()"><i data-lucide="image" size="14"></i> Export Image (Ctrl+Shift+S)</div>
             </div>
             <input type="file" id="psd-input" accept=".psd" class="hidden">
         </div>
@@ -251,23 +264,29 @@
         </div>
 
         <div class="toolbar">
-            <button class="tool-btn" id="tool-select" title="選擇 (V)"><i data-lucide="mouse-pointer-2" size="20"></i></button>
-            <div class="tool-group relative" id="group-lasso">
-                <button class="tool-btn" id="tool-lasso-group" title="選區 (M)"><i data-lucide="wand" size="20"></i></button>
+            <!-- Combined Select/Lasso/Magic Group -->
+            <div class="tool-group relative" id="group-select">
+                <button class="tool-btn" id="tool-select-group" title="Select / Lasso (V/M)">
+                    <i data-lucide="mouse-pointer-2" size="20"></i>
+                    <div id="select-indicator" class="brush-type-icon">Sel</div>
+                </button>
                 <div class="sub-tool-popup">
+                    <button class="tool-btn" onclick="window.setTool('select')" title="选择 (V - Drag L->R Contain, R->L Intersect)"><i data-lucide="mouse-pointer-2" size="16"></i></button>
                     <button class="tool-btn" onclick="window.setTool('lasso-free')" title="套索"><i data-lucide="lasso" size="16"></i></button>
                     <button class="tool-btn" onclick="window.setTool('lasso-rect')" title="矩形"><i data-lucide="box-select" size="16"></i></button>
                     <button class="tool-btn" onclick="window.setTool('magic-wand')" title="魔棒"><i data-lucide="wand" size="16"></i></button>
                 </div>
             </div>
+            
             <div class="w-px h-4 bg-gray-300 mx-1"></div>
+            
             <div class="tool-group relative" id="group-guide">
-                <button class="tool-btn" id="tool-guide-btn" title="輔助"><i data-lucide="ruler" size="20"></i></button>
+                <button class="tool-btn" id="tool-guide-btn" title="輔助 (Linear Locks Direction)"><i data-lucide="ruler" size="20"></i></button>
                 <div class="sub-tool-popup" style="width: 200px; left: 0; transform: translateX(-40%);">
                     <div class="flex gap-1 justify-center p-1">
                         <button class="tool-btn w-8 h-8" onclick="setGuide('none')"><i data-lucide="x" size="14"></i></button>
                         <button class="tool-btn w-8 h-8" onclick="setGuide('grid')"><i data-lucide="grid-3x3" size="14"></i></button>
-                        <button class="tool-btn w-8 h-8" onclick="setGuide('linear')"><i data-lucide="move-diagonal" size="14"></i></button>
+                        <button class="tool-btn w-8 h-8" onclick="setGuide('linear')" title="Lock Angle"><i data-lucide="move-diagonal" size="14"></i></button>
                     </div>
                     <div class="text-xs text-center text-gray-400 border-t border-gray-100 pt-1">Perspective</div>
                     <div class="flex gap-1 justify-center p-1">
@@ -279,16 +298,28 @@
                 </div>
             </div>
             <div class="w-px h-4 bg-gray-300 mx-1"></div>
-            <button class="tool-btn active" id="tool-pen" title="畫筆 (B)"><i data-lucide="pen-tool" size="20"></i><div id="brush-indicator" class="brush-type-icon">Pen</div></button>
+            <!-- Integrated Brush Tool Group -->
+            <div class="tool-group relative" id="group-pen">
+                <button class="tool-btn active" id="tool-pen-main" title="畫筆 (B)" onclick="cycleBrush()"><i data-lucide="pen-tool" size="20"></i><div id="brush-indicator" class="brush-type-icon">Pen</div></button>
+                <div class="sub-tool-popup">
+                    <button class="tool-btn" onclick="window.setTool('pen')" title="鋼筆"><i data-lucide="pen-tool" size="16"></i></button>
+                    <button class="tool-btn" onclick="window.setTool('pencil')" title="鉛筆"><i data-lucide="pencil" size="16"></i></button>
+                    <button class="tool-btn" onclick="window.setTool('watercolor')" title="水彩"><i data-lucide="droplets" size="16"></i></button>
+                    <button class="tool-btn" onclick="window.setTool('calligraphy')" title="毛筆"><i data-lucide="feather" size="16"></i></button>
+                    <button class="tool-btn" onclick="window.setTool('fill')" title="填充"><i data-lucide="paint-bucket" size="16"></i></button>
+                </div>
+            </div>
+            
             <button class="tool-btn" id="tool-text" title="文字 (T)"><i data-lucide="type" size="20"></i></button>
             <button class="tool-btn" id="tool-eraser" title="橡皮擦 (E)"><i data-lucide="eraser" size="20"></i></button>
+            <button class="tool-btn" id="tool-hand" title="抓手 (H / Space)"><i data-lucide="hand" size="20"></i></button>
             <div class="w-px h-4 bg-gray-300 mx-1"></div>
-            <button class="tool-btn" id="btn-color"><div id="color-indicator" class="w-5 h-5 rounded bg-black border border-gray-300"></div></button>
+            <button class="tool-btn" id="btn-color" title="顏色 (I - Eyedropper)"><div id="color-indicator" class="w-5 h-5 rounded bg-black border border-gray-300"></div></button>
             <button class="tool-btn" id="btn-image" title="導入圖片" onclick="document.getElementById('file-input').click()"><i data-lucide="image-plus" size="20"></i></button>
             <input type="file" id="file-input" accept="image/*" class="hidden">
             <div class="w-px h-4 bg-gray-300 mx-1"></div>
-            <button class="tool-btn" id="btn-undo"><i data-lucide="undo-2" size="18"></i></button>
-            <button class="tool-btn" id="btn-redo"><i data-lucide="redo-2" size="18"></i></button>
+            <button class="tool-btn" id="btn-undo" title="Undo (Ctrl+Z)"><i data-lucide="undo-2" size="18"></i></button>
+            <button class="tool-btn" id="btn-redo" title="Redo (Ctrl+Shift+Z)"><i data-lucide="redo-2" size="18"></i></button>
         </div>
     </div>
 
@@ -314,7 +345,7 @@
             </div>
         </div>
         <div class="ps-eyedropper-btn" onclick="toggleEyedropper()">
-            <i data-lucide="pipette" size="16"></i> 吸管工具
+            <i data-lucide="pipette" size="16"></i> 吸管工具 (I)
         </div>
     </div>
 
@@ -330,20 +361,24 @@
 
         const FONTS = ['Noto Sans TC', 'Arial', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana', 'Impact', 'Comic Sans MS'];
         const BRUSH_TYPES = [
-            { id: 'pen', name: '鋼筆', label: 'Pen' },
-            { id: 'pencil', name: '鉛筆', label: 'Pencil' },
-            { id: 'watercolor', name: '水彩', label: 'Water' },
-            { id: 'calligraphy', name: '毛筆', label: 'Calli' },
-            { id: 'fill', name: '填充', label: 'Fill' }
+            { id: 'pen', name: '鋼筆', label: 'Pen', icon: 'pen-tool' },
+            { id: 'pencil', name: '鉛筆', label: 'Pencil', icon: 'pencil' },
+            { id: 'watercolor', name: '水彩', label: 'Water', icon: 'droplets' },
+            { id: 'calligraphy', name: '毛筆', label: 'Calli', icon: 'feather' },
+            { id: 'fill', name: '填充', label: 'Fill', icon: 'paint-bucket' }
         ];
-        const LASSO_TOOLS = ['lasso-free', 'lasso-rect', 'magic-wand'];
+        const SELECT_TOOLS = [
+            { id: 'select', name: '选择', label: 'Sel', icon: 'mouse-pointer-2' },
+            { id: 'lasso-free', name: '套索', label: 'Lasso', icon: 'lasso' },
+            { id: 'lasso-rect', name: '矩形', label: 'Rect', icon: 'box-select' },
+            { id: 'magic-wand', name: '魔棒', label: 'Wand', icon: 'wand' }
+        ];
 
         // --- APP STATE ---
         const app = {
             mode: 'pen',
             lastBrushId: 'pen',
             brushIndex: 0,
-            lassoIndex: 0,
             hsv: { h: 0, s: 0, v: 0 }, 
             colorString: '#000000',
             toolSize: { pen: 3, pencil: 2, watercolor: 15, calligraphy: 5, eraser: 30, fill: 1 },
@@ -370,7 +405,9 @@
             transformSnapshot: null, pixelSelection: null, 
             historyStack: [], historyIndex: -1,
             tempImgAdjust: { h: 0, s: 100, con: 100 },
-            isSpacePressed: false
+            isSpacePressed: false,
+            isZenMode: false,
+            lastNPressTime: 0
         };
 
         // --- CORE FUNCTIONS ---
@@ -379,16 +416,20 @@
             document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
             
             const isBrush = BRUSH_TYPES.find(b => b.id === app.mode);
-            const isLasso = LASSO_TOOLS.includes(app.mode);
+            const isSelectGroup = SELECT_TOOLS.find(b => b.id === app.mode);
             
             if (isBrush) {
-                document.getElementById('tool-pen').classList.add('active');
-                const indicator = document.getElementById('brush-indicator');
-                if(indicator) indicator.innerText = isBrush.label;
-            } else if (isLasso) {
-                document.getElementById('tool-lasso-group').classList.add('active');
+                document.getElementById('tool-pen-main').classList.add('active');
+                const mainBtn = document.getElementById('tool-pen-main');
+                mainBtn.innerHTML = `<i data-lucide="${isBrush.icon}" size="20"></i><div id="brush-indicator" class="brush-type-icon">${isBrush.label}</div>`;
+                try{lucide.createIcons();}catch(e){}
+            } else if (isSelectGroup) {
+                document.getElementById('tool-select-group').classList.add('active');
+                const mainBtn = document.getElementById('tool-select-group');
+                mainBtn.innerHTML = `<i data-lucide="${isSelectGroup.icon}" size="20"></i><div id="select-indicator" class="brush-type-icon">${isSelectGroup.label}</div>`;
+                try{lucide.createIcons();}catch(e){}
             } else {
-                const map = { 'eraser': 'tool-eraser', 'text': 'tool-text', 'select': 'tool-select', 'hand': 'tool-hand' };
+                const map = { 'eraser': 'tool-eraser', 'text': 'tool-text', 'hand': 'tool-hand', 'eyedropper': 'btn-color' };
                 const btnId = map[app.mode];
                 if(btnId) document.getElementById(btnId)?.classList.add('active');
             }
@@ -398,10 +439,30 @@
             const sizeGroup = document.getElementById('opt-size-group');
             const angleGroup = document.getElementById('opt-angle-group');
             
-            if (app.showOptionSlider) {
+            // Show options if drawing, selection mode (if strokes selected), or magic wand
+            const hasStrokeSelection = app.mode === 'select' && app.selection.length > 0 && app.selection.some(i => i.points);
+            
+            // Show panel if: User toggled it OR Stroke Selected OR Linear Guide Active
+            if (app.showOptionSlider || hasStrokeSelection || app.guides.active === 'linear') {
                 optionPanel.style.display = 'flex';
-                sizeGroup.style.display = 'flex';
-                angleGroup.style.display = 'none';
+                
+                // Toggle size slider
+                if (app.guides.active === 'linear' && !hasStrokeSelection && !app.showOptionSlider) {
+                    // Only show angle if linear guide is active and no tool options are specifically requested
+                    sizeGroup.style.display = 'none';
+                } else {
+                    sizeGroup.style.display = 'flex';
+                }
+
+                // Toggle angle slider
+                if ((app.guides.active === 'linear' || app.guides.active === 'grid')) {
+                    angleGroup.style.display = 'flex';
+                    const angSlider = document.getElementById('angle-slider');
+                    angSlider.value = Math.round(app.guides.angle * (180/Math.PI));
+                    document.getElementById('angle-val').innerText = angSlider.value + "°";
+                } else {
+                    angleGroup.style.display = 'none';
+                }
                 
                 const slider = document.getElementById('option-slider');
                 const label = document.getElementById('option-label');
@@ -411,17 +472,16 @@
                     label.innerText = "Tol";
                     slider.max = 100;
                     slider.value = app.magicWand.tolerance;
+                } else if (hasStrokeSelection) {
+                    label.innerText = "Size";
+                    slider.max = 100;
+                    // Take size of first selected stroke
+                    const stroke = app.selection.find(i => i.points);
+                    slider.value = stroke ? stroke.size : 3;
                 } else {
                     label.innerText = "Size";
                     slider.max = 100;
                     slider.value = app.toolSize[app.mode] || 3;
-                    
-                    if ((app.guides.active === 'linear' || app.guides.active === 'grid') && isBrush) {
-                        angleGroup.style.display = 'flex';
-                        const angSlider = document.getElementById('angle-slider');
-                        angSlider.value = Math.round(app.guides.angle * (180/Math.PI));
-                        document.getElementById('angle-val').innerText = angSlider.value + "°";
-                    }
                 }
                 valDisplay.innerText = slider.value;
             } else {
@@ -433,7 +493,7 @@
             if (app.mode === 'select' || app.mode === 'text') canvas.style.cursor = 'default';
             if (app.mode === 'hand' || app.isSpacePressed) canvas.style.cursor = 'grab';
             if (app.isPanning) canvas.style.cursor = 'grabbing';
-            if (LASSO_TOOLS.includes(app.mode) || app.mode === 'eyedropper') canvas.style.cursor = 'crosshair';
+            if (['lasso-free','lasso-rect','magic-wand','eyedropper'].includes(app.mode)) canvas.style.cursor = 'crosshair';
             if (app.isDraggingVP >= 0) canvas.style.cursor = 'move';
             if (app.activeHandle && !app.isPanning) {
                if(app.activeHandle === 'tl' || app.activeHandle === 'br') canvas.style.cursor = 'nwse-resize';
@@ -458,6 +518,23 @@
             switch (i % 6) { case 0: r = v, g = t, b = p; break; case 1: r = q, g = v, b = p; break; case 2: r = p, g = v, b = t; break; case 3: r = p, g = q, b = v; break; case 4: r = t, g = p, b = v; break; case 5: r = v, g = p, b = q; break; }
             return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
         }
+        function rgbToHsv(r, g, b) {
+            r /= 255, g /= 255, b /= 255;
+            let max = Math.max(r, g, b), min = Math.min(r, g, b);
+            let h, s, v = max;
+            let d = max - min;
+            s = max == 0 ? 0 : d / max;
+            if (max == min) { h = 0; } 
+            else {
+                switch (max) {
+                    case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                    case g: h = (b - r) / d + 2; break;
+                    case b: h = (r - g) / d + 4; break;
+                }
+                h /= 6;
+            }
+            return { h: h * 360, s: s, v: v };
+        }
         function rgbToHex(r, g, b) { return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1); }
         function hexToRgb(hex) {
             const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -472,7 +549,8 @@
             const rgb = hsvToRgb(app.hsv.h, app.hsv.s, app.hsv.v);
             app.colorString = rgbToHex(rgb.r, rgb.g, rgb.b);
             document.getElementById('color-indicator').style.backgroundColor = app.colorString;
-            // Update selection color immediately
+            
+            // Update selection color immediately (both strokes and text)
             if (app.selection.length > 0) {
                 window.triggerGroupRecolor();
             }
@@ -488,9 +566,37 @@
             curH.style.top = ((app.hsv.h / 360) * 100) + '%';
         }
         
+        // --- SYNC UI TO SELECTION ---
+        function syncUIToSelection() {
+            if (app.selection.length === 0) return;
+            const item = app.selection[0];
+            
+            // Sync Color
+            let color = item.color;
+            if (item.content !== undefined && !color) color = '#000000';
+            
+            if (color) {
+                app.colorString = color;
+                document.getElementById('color-indicator').style.backgroundColor = color;
+                const rgb = hexToRgb(color);
+                if (rgb) {
+                    app.hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+                    updatePickerUI(); 
+                }
+            }
+
+            // Sync Size (if stroke)
+            if (item.points) {
+                const slider = document.getElementById('option-slider');
+                slider.value = item.size;
+                document.getElementById('option-val').innerText = item.size;
+            }
+            
+            updateToolUI(); // Refresh slider visibility
+        }
+
         // --- MAGIC WAND & FLOOD FILL ---
         function magicWandSelect(x, y, isAdding) {
-            // Find which image was clicked (top-most first)
             let targetImg = null;
             for (let i = app.images.length - 1; i >= 0; i--) {
                 const img = app.images[i];
@@ -505,7 +611,6 @@
 
             if (!targetImg) return; 
 
-            // Create temp canvas to read image data
             const w = Math.floor(targetImg.w);
             const h = Math.floor(targetImg.h);
             const tCanvas = document.createElement('canvas');
@@ -529,12 +634,11 @@
             const startPos = (ly * w + lx) * 4;
             const startR = data[startPos], startG = data[startPos+1], startB = data[startPos+2], startA = data[startPos+3];
             
-            // Re-use or Create new Visited array
             let visited;
             if (isAdding && app.pixelSelection && app.pixelSelection.imageId === targetImg.id) {
-                visited = app.pixelSelection.maskData; // Use existing
+                visited = app.pixelSelection.maskData; 
             } else {
-                visited = new Uint8Array(w * h); // New
+                visited = new Uint8Array(w * h); 
             }
 
             const stack = [lx, ly];
@@ -562,7 +666,6 @@
                 }
             }
             
-            // Build visual mask from visited array
             const maskData = new Uint8ClampedArray(w * h * 4);
             for (let i = 0; i < w * h; i++) {
                 if (visited[i]) {
@@ -585,7 +688,6 @@
             requestRender();
         }
 
-        // --- NEW: FLOAT SELECTION (CUT) ---
         function floatPixelSelection() {
             if (!app.pixelSelection) return;
             const sel = app.pixelSelection;
@@ -596,7 +698,6 @@
             const h = Math.floor(srcImg.h);
             const visited = sel.maskData;
 
-            // 1. Determine bounds of selection
             let minX = w, minY = h, maxX = 0, maxY = 0;
             let hasPixels = false;
             for(let y=0; y<h; y++) {
@@ -615,7 +716,6 @@
             const floatW = maxX - minX + 1;
             const floatH = maxY - minY + 1;
 
-            // 2. Extract pixels to new canvas & Clear from source
             const srcCanvas = document.createElement('canvas');
             srcCanvas.width = w; srcCanvas.height = h;
             const sCtx = srcCanvas.getContext('2d');
@@ -632,7 +732,6 @@
                     const idx = y*w+x;
                     if(visited[idx]) {
                         const sPos = idx * 4;
-                        // Copy to float
                         const fx = x - minX;
                         const fy = y - minY;
                         const fPos = (fy * floatW + fx) * 4;
@@ -640,21 +739,17 @@
                         floatData.data[fPos+1] = srcData.data[sPos+1];
                         floatData.data[fPos+2] = srcData.data[sPos+2];
                         floatData.data[fPos+3] = srcData.data[sPos+3];
-                        
-                        // Clear source
                         srcData.data[sPos+3] = 0; 
                     }
                 }
             }
             
-            // Update Source
             sCtx.putImageData(srcData, 0, 0);
             const newSrcImg = new Image();
             newSrcImg.src = srcCanvas.toDataURL();
             srcImg.imgElement = newSrcImg;
             srcImg.src = newSrcImg.src;
 
-            // Create Floater
             fCtx.putImageData(floatData, 0, 0);
             const floatImg = new Image();
             floatImg.onload = () => {
@@ -672,16 +767,12 @@
                 };
                 app.images.push(newObj);
                 
-                // Select the new object and switch to transform mode
                 app.pixelSelection = null;
                 clearSelection();
                 addToSelection(newObj);
                 updateTransformBox();
                 app.isTransforming = true;
-                app.activeHandle = 'body'; // Immediately grab
-                // Recalculate snapshot for immediate drag
-                const r = canvas.getBoundingClientRect();
-                // Mock event pos if needed, or wait for next move
+                app.activeHandle = 'body'; 
             };
             floatImg.src = floatCanvas.toDataURL();
             
@@ -750,6 +841,23 @@
                 return;
             }
             
+            if (app.mode === 'eyedropper') {
+                const pixel = ctx.getImageData(pos.sx, pos.sy, 1, 1).data;
+                const hex = "#" + ((1 << 24) + (pixel[0] << 16) + (pixel[1] << 8) + pixel[2]).toString(16).slice(1);
+                
+                app.colorString = hex;
+                document.getElementById('color-indicator').style.backgroundColor = hex;
+                
+                const hsv = rgbToHsv(pixel[0], pixel[1], pixel[2]);
+                app.hsv = hsv;
+                updatePickerUI();
+                
+                // If text or stroke is selected, apply immediately
+                if(app.selection.length > 0) applyColor();
+
+                return;
+            }
+
             if (app.mode === 'magic-wand') {
                 magicWandSelect(pos.x, pos.y, e.shiftKey);
                 return;
@@ -768,19 +876,12 @@
             }
 
             if (app.mode === 'select') {
-                // If we have a pixel selection active and user clicks inside/on it, 
-                // we want to float it. Since pixel selection is just a mask on an image,
-                // we assume clicking anywhere triggers the float if pixelSelection exists.
-                // Or to be precise, check if click is inside the mask.
                 if (app.pixelSelection && !e.shiftKey) {
-                    // Check if click is inside mask bounds (simplified)
                     const ps = app.pixelSelection;
                     if (pos.x >= ps.x && pos.x <= ps.x + ps.maskCanvas.width && 
                         pos.y >= ps.y && pos.y <= ps.y + ps.maskCanvas.height) {
                         floatPixelSelection();
-                        // Then fall through to normal transform start logic because floatPixelSelection selects the new object
-                        // We need to re-initiate the drag
-                        const floatItem = app.selection[0]; // The new item
+                        const floatItem = app.selection[0]; 
                         if (floatItem) {
                             app.transformBox = getSelectionAABB(app.selection);
                             app.isTransforming = true;
@@ -794,7 +895,6 @@
                             return;
                         }
                     } else {
-                        // Clicked outside pixel selection -> clear it
                         app.pixelSelection = null;
                         requestRender();
                     }
@@ -824,6 +924,7 @@
                         group.forEach(g => addToSelection(g));
                     }
                     updateTransformBox();
+                    syncUIToSelection(); // Sync UI with clicked item
                     app.isTransforming = true;
                     app.activeHandle = 'body';
                     app.lastPos = pos;
@@ -832,8 +933,12 @@
                         startBox: { ...app.transformBox },
                         items: app.selection.map(i => ({ ref: i, x: i.x, y: i.y, w: i.w, h: i.h, fontSize: i.fontSize, pts: i.points?JSON.parse(JSON.stringify(i.points)):null }))
                     };
+                    return; // Hit object, start transform
                 } else {
+                    // Clicked empty space: Start Selection Drag
                     if (!e.shiftKey) clearSelection();
+                    app.isSelecting = true;
+                    app.selectionPath = [{x: pos.x, y: pos.y}];
                 }
                 return;
             }
@@ -873,7 +978,7 @@
                 requestRender();
             }
             
-            if (LASSO_TOOLS.includes(app.mode) || app.mode === 'fill') {
+            if (['lasso-free', 'lasso-rect', 'fill'].includes(app.mode)) {
                 app.isSelecting = true;
                 app.selectionPath = [{x: pos.x, y: pos.y}];
                 if (!e.shiftKey) clearSelection(); 
@@ -920,7 +1025,6 @@
                     const sb = snap.startBox;
                     let newX = sb.x, newY = sb.y, newW = sb.w, newH = sb.h;
                     
-                    // 1. Calculate raw dimensions based on drag
                     let rawW = sb.w;
                     let rawH = sb.h;
 
@@ -929,10 +1033,8 @@
                     else if (app.activeHandle === 'tr') { rawW += dx; rawH -= dy; }
                     else if (app.activeHandle === 'tl') { rawW -= dx; rawH -= dy; }
 
-                    // 2. Apply Shift Constraint (Aspect Ratio Lock)
                     if (e.shiftKey) {
                         const ratio = sb.w / sb.h;
-                        // Use the dimension with the larger relative change to drive the other
                         if (Math.abs(rawW / sb.w) > Math.abs(rawH / sb.h)) {
                             rawH = rawW / ratio;
                         } else {
@@ -940,27 +1042,16 @@
                         }
                     }
 
-                    // 3. Min size constraint
                     if(rawW < 10) rawW = 10;
                     if(rawH < 10) rawH = 10;
                     
                     newW = rawW;
                     newH = rawH;
 
-                    // 4. Recalculate X/Y based on the fixed anchor point of the handle
-                    if (app.activeHandle === 'br') { 
-                        newX = sb.x; 
-                        newY = sb.y; 
-                    } else if (app.activeHandle === 'bl') { 
-                        newX = sb.x + sb.w - newW; // Anchor Right
-                        newY = sb.y; 
-                    } else if (app.activeHandle === 'tr') { 
-                        newX = sb.x; 
-                        newY = sb.y + sb.h - newH; // Anchor Bottom
-                    } else if (app.activeHandle === 'tl') { 
-                        newX = sb.x + sb.w - newW; // Anchor Bottom-Right
-                        newY = sb.y + sb.h - newH; 
-                    }
+                    if (app.activeHandle === 'br') { newX = sb.x; newY = sb.y; } 
+                    else if (app.activeHandle === 'bl') { newX = sb.x + sb.w - newW; newY = sb.y; } 
+                    else if (app.activeHandle === 'tr') { newX = sb.x; newY = sb.y + sb.h - newH; } 
+                    else if (app.activeHandle === 'tl') { newX = sb.x + sb.w - newW; newY = sb.y + sb.h - newH; }
 
                     const scaleX = newW / sb.w;
                     const scaleY = newH / sb.h;
@@ -997,20 +1088,41 @@
 
             if (app.isDrawing && app.strokes.length > 0) {
                 const stroke = app.strokes[app.strokes.length - 1];
+                let targetPos = {x: pos.x, y: pos.y};
+
+                // Linear Guide Constraint
+                if (app.guides.active === 'linear') {
+                    // Project the vector from last point onto the guide angle
+                    const last = app.lastPointDrawn;
+                    const dx = pos.x - last.x;
+                    const dy = pos.y - last.y;
+                    const angle = app.guides.angle;
+                    
+                    // Vector projection: proj_b(a) = (a . b) / |b| * b_hat
+                    // b_hat is unit vector of angle (cos, sin)
+                    const ux = Math.cos(angle);
+                    const uy = Math.sin(angle);
+                    const dot = dx * ux + dy * uy;
+                    
+                    targetPos.x = last.x + dot * ux;
+                    targetPos.y = last.y + dot * uy;
+                }
+
                 if (e.shiftKey && stroke.points.length > 0) {
                     const start = stroke.points[0];
-                    const dx = pos.x - start.x;
-                    const dy = pos.y - start.y;
+                    const dx = targetPos.x - start.x;
+                    const dy = targetPos.y - start.y;
                     const angle = Math.atan2(dy, dx);
                     const snapAngle = Math.round(angle / (Math.PI/4)) * (Math.PI/4);
                     const dist = Math.hypot(dx, dy);
-                    pos.x = start.x + Math.cos(snapAngle) * dist;
-                    pos.y = start.y + Math.sin(snapAngle) * dist;
+                    targetPos.x = start.x + Math.cos(snapAngle) * dist;
+                    targetPos.y = start.y + Math.sin(snapAngle) * dist;
                 }
-                const dist = Math.hypot(pos.x - app.lastPointDrawn.x, pos.y - app.lastPointDrawn.y);
+
+                const dist = Math.hypot(targetPos.x - app.lastPointDrawn.x, targetPos.y - app.lastPointDrawn.y);
                 if (dist > 2 / app.camera.zoom) {
-                    stroke.points.push({x: pos.x, y: pos.y});
-                    app.lastPointDrawn = pos;
+                    stroke.points.push({x: targetPos.x, y: targetPos.y});
+                    app.lastPointDrawn = targetPos;
                     requestRender();
                 }
             }
@@ -1060,26 +1172,50 @@
                 }
                 return inside;
             };
+            
+            // Rect Intersection helper
             const isRectIntersect = (itemBox, selBox) => {
                 return !(itemBox.x > selBox.x + selBox.w || itemBox.x + itemBox.w < selBox.x || itemBox.y > selBox.y + selBox.h || itemBox.y + itemBox.h < selBox.y);
+            };
+
+            // Rect Containment helper
+            const isRectContained = (itemBox, selBox) => {
+                return itemBox.x >= selBox.x && 
+                       itemBox.x + itemBox.w <= selBox.x + selBox.w && 
+                       itemBox.y >= selBox.y && 
+                       itemBox.y + itemBox.h <= selBox.y + selBox.h;
             };
 
             const itemsToSelect = [];
             const allItems = [...app.strokes, ...app.images, ...app.notes]; 
             
-            if (app.mode === 'lasso-rect') {
+            if (app.mode === 'select' || app.mode === 'lasso-rect') {
                 const start = app.selectionPath[0];
                 const end = app.selectionPath[app.selectionPath.length-1];
+                
                 const minX = Math.min(start.x, end.x);
                 const minY = Math.min(start.y, end.y);
                 const w = Math.abs(end.x - start.x);
                 const h = Math.abs(end.y - start.y);
                 const selBox = {x: minX, y: minY, w, h};
+                
+                // Direction detection for CAD style selection
+                // If dragging Left to Right (end.x > start.x) -> Containment (Blue)
+                // If dragging Right to Left (end.x < start.x) -> Intersection (Green)
+                const isCrossing = end.x < start.x;
+
                 allItems.forEach(item => {
                     const layer = app.layers.find(l=>l.id===item.layerId);
                     if(!layer || !layer.visible || layer.locked) return;
+                    
                     const b = getBounds(item);
-                    if (isRectIntersect(b, selBox)) itemsToSelect.push(item);
+                    if (isCrossing) {
+                        // Intersection
+                        if (isRectIntersect(b, selBox)) itemsToSelect.push(item);
+                    } else {
+                        // Containment
+                        if (isRectContained(b, selBox)) itemsToSelect.push(item);
+                    }
                 });
             } else if (app.mode === 'lasso-free') {
                 allItems.forEach(item => {
@@ -1093,7 +1229,8 @@
             
             itemsToSelect.forEach(i => addToSelection(i));
             if (itemsToSelect.length > 0) {
-                window.setTool('select');
+                // If we were in lasso, switch to select to transform
+                if(app.mode.startsWith('lasso')) window.setTool('select');
                 updateTransformBox();
             }
         }
@@ -1115,24 +1252,82 @@
             requestRender();
         }
 
+        function toggleZenMode() {
+            app.isZenMode = !app.isZenMode;
+            if (app.isZenMode) {
+                document.body.classList.add('zen-mode');
+            } else {
+                document.body.classList.remove('zen-mode');
+            }
+        }
+
         // Keys
         window.addEventListener('keydown', (e) => {
             if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
             if (e.code === 'Space' && !app.isSpacePressed) { app.isSpacePressed = true; updateToolUI(); }
+            
+            // Zen Mode (Double Tap N or Esc to exit)
+            if (e.key.toLowerCase() === 'n') {
+                const now = Date.now();
+                if (now - app.lastNPressTime < 300) {
+                    toggleZenMode();
+                    app.lastNPressTime = 0; // reset
+                } else {
+                    app.lastNPressTime = now;
+                }
+            }
+
+            // Tool Shortcuts
             if (e.key === 'v') window.setTool('select');
             if (e.key === 'b') window.setTool('pen');
             if (e.key === 'e') window.setTool('eraser');
             if (e.key === 't') window.setTool('text');
             if (e.key === 'h') window.setTool('hand');
-            if (e.key === 'm') window.setTool('lasso-group'); 
+            // M cycles the selection group now
+            if (e.key === 'm') {
+                const currentId = app.mode;
+                const idx = SELECT_TOOLS.findIndex(t => t.id === currentId);
+                if (idx >= 0) {
+                    const next = SELECT_TOOLS[(idx + 1) % SELECT_TOOLS.length];
+                    window.setTool(next.id);
+                } else {
+                    window.setTool('lasso-free');
+                }
+            }
+            if (e.key.toLowerCase() === 'i') window.setTool('eyedropper');
+
+            if (e.key === 'Escape') {
+                // Exit Zen Mode first if active
+                if (app.isZenMode) {
+                    toggleZenMode();
+                    return;
+                }
+
+                // Exit all Modals/Modes
+                document.getElementById('export-modal').style.display = 'none';
+                document.getElementById('img-adjust-modal').style.display = 'none';
+                document.getElementById('ps-picker').classList.remove('show');
+                
+                if (app.selection.length > 0 || app.pixelSelection) clearSelection();
+                app.isTransforming = false;
+                app.isDrawing = false;
+                window.setTool('select');
+            }
+
             if (e.key === 'Delete' || e.key === 'Backspace') {
                 if (app.pixelSelection) deletePixelSelection();
                 else deleteSelection();
             }
-            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+            if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || e.key.toLowerCase() === 'z')) {
+                e.preventDefault();
                 if (e.shiftKey) document.getElementById('btn-redo').click();
                 else document.getElementById('btn-undo').click();
+            }
+            // Save Shortcuts
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                 e.preventDefault();
+                if (e.shiftKey) showExportDialog(); // Export Image
+                else savePSD(); // Save PSD
             }
             if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
                 e.preventDefault();
@@ -1148,11 +1343,6 @@
         function cycleBrush() { 
             app.brushIndex = (app.brushIndex + 1) % BRUSH_TYPES.length; 
             window.setTool(BRUSH_TYPES[app.brushIndex].id); 
-        }
-
-        function cycleLasso() { 
-            app.lassoIndex = (app.lassoIndex + 1) % LASSO_TOOLS.length; 
-            window.setTool(LASSO_TOOLS[app.lassoIndex]); 
         }
 
         function toggleEyedropper() { 
@@ -1184,6 +1374,7 @@
                             if(e.shiftKey) addToSelection(note); 
                             else if(!app.selection.includes(note)) { clearSelection(); addToSelection(note); } 
                             updateTransformBox(); 
+                            syncUIToSelection(); // Sync for text too
                             app.isTransforming = true; app.activeHandle = 'body'; 
                             app.transformSnapshot = { startPos: getWorldPos(e), startBox: { ...app.transformBox }, items: app.selection.map(i => ({ ref: i, x: i.x, y: i.y, w: i.w, h: i.h, fontSize: i.fontSize })) }; 
                         } 
@@ -1318,9 +1509,12 @@
         
         window.setTool = function(t) {
             const isBrush = BRUSH_TYPES.find(b=>b.id===t);
+            const isSelect = SELECT_TOOLS.find(b=>b.id===t);
+            
             if(isBrush){app.mode=t;app.lastBrushId=t;app.brushIndex=BRUSH_TYPES.findIndex(b=>b.id===t);app.showOptionSlider=!app.showOptionSlider;}
-            else if(LASSO_TOOLS.includes(t)){app.mode=t;app.lassoIndex=LASSO_TOOLS.indexOf(t);app.showOptionSlider=t==='magic-wand';}
-            else if(t==='eraser'||t==='eyedropper'||t==='text'||t==='select'||t==='hand'){app.mode=t;app.showOptionSlider=t==='eraser'; if(t!=='select')clearSelection();}
+            else if(isSelect){app.mode=t;app.showOptionSlider=t==='magic-wand';}
+            else if(t==='eraser'||t==='eyedropper'||t==='text'||t==='hand'){app.mode=t;app.showOptionSlider=t==='eraser'; if(t!=='select')clearSelection();}
+            
             app.isSelecting=false;app.selectionPath=[];
             if(t!=='eyedropper')document.querySelector('.ps-eyedropper-btn').classList.remove('active');
             updateToolUI();
@@ -1365,10 +1559,8 @@
                 const img = new Image();
                 img.onload = () => {
                     const id = Date.now();
-                    // Place image at center of screen
                     const cx = (canvas.width/2 - app.camera.x)/app.camera.zoom;
                     const cy = (canvas.height/2 - app.camera.y)/app.camera.zoom;
-                    // Fit to screen if too large
                     let w = img.width, h = img.height;
                     const maxW = 500 / app.camera.zoom;
                     if(w > maxW) { const r = maxW/w; w *= r; h *= r; }
@@ -1382,9 +1574,20 @@
         };
 
         // Event Bindings
-        document.getElementById('tool-pen').onclick = () => window.setTool(BRUSH_TYPES[app.brushIndex].id);
-        ['text','eraser','select'].forEach(t => document.getElementById('tool-'+t).onclick = () => window.setTool(t));
-        document.getElementById('tool-lasso-group').onclick = () => cycleLasso();
+        document.getElementById('tool-pen-main').onclick = () => cycleBrush();
+        ['text','eraser','hand'].forEach(t => document.getElementById('tool-'+t).onclick = () => window.setTool(t));
+        // Tool group logic
+        document.getElementById('tool-select-group').onclick = () => {
+             // Cycle or re-activate current select tool
+             const current = SELECT_TOOLS.find(t => t.id === app.mode);
+             if(current) {
+                 // Already active, maybe cycle? Or do nothing? Let's cycle for M shortcut consistency
+                 const idx = SELECT_TOOLS.indexOf(current);
+                 window.setTool(SELECT_TOOLS[(idx + 1) % SELECT_TOOLS.length].id);
+             } else {
+                 window.setTool('select');
+             }
+        };
         
         document.getElementById('ps-sb-area').onpointerdown = (e) => { e.stopPropagation(); app.isPickingColor = true; updateColorFromSB(e.offsetX, e.offsetY, e.target.getBoundingClientRect()); };
         document.getElementById('ps-h-strip').onpointerdown = (e) => { e.stopPropagation(); app.isPickingHue = true; const r = e.target.getBoundingClientRect(); app.hsv.h = Math.max(0, Math.min(360, (e.offsetY / r.height) * 360)); updatePickerUI(); applyColor(); };
@@ -1392,9 +1595,24 @@
         window.addEventListener('pointerup', () => { app.isPickingColor = false; app.isPickingHue = false; });
         document.getElementById('option-slider').oninput = (e) => { 
             if(app.mode === 'magic-wand') app.magicWand.tolerance = parseInt(e.target.value);
+            else if (app.mode === 'select' && app.selection.length > 0) {
+                const val = parseInt(e.target.value);
+                app.selection.forEach(item => {
+                    if (item.points) item.size = val;
+                });
+                document.getElementById('option-val').innerText = val;
+                requestRender();
+            }
             else app.toolSize[app.mode] = parseInt(e.target.value);
-            updateToolUI(); 
+            
+            if (app.mode !== 'select') {
+                document.getElementById('option-val').innerText = e.target.value;
+            }
         };
+        document.getElementById('option-slider').onchange = (e) => {
+             if (app.mode === 'select' && app.selection.some(i => i.points)) saveState();
+        };
+
         document.getElementById('angle-slider').oninput = (e) => { app.guides.angle = parseInt(e.target.value) * (Math.PI/180); updateToolUI(); requestRender(); };
 
         // Render Loop
@@ -1419,7 +1637,6 @@
                 ctx.globalAlpha = 0.5;
                 ctx.translate(app.camera.x, app.camera.y);
                 ctx.scale(app.camera.zoom, app.camera.zoom);
-                // Draw mask relative to image position
                 ctx.translate(app.pixelSelection.x, app.pixelSelection.y);
                 ctx.drawImage(app.pixelSelection.maskCanvas, 0, 0);
                 ctx.restore();
@@ -1427,7 +1644,52 @@
 
             ctx.save(); ctx.translate(app.camera.x, app.camera.y); ctx.scale(app.camera.zoom, app.camera.zoom);
             if(app.selection.length > 0) { ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1/app.camera.zoom; app.selection.forEach(item => { const b = getBounds(item); ctx.strokeRect(b.x, b.y, b.w, b.h); }); if(app.transformBox) { const b = app.transformBox; ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5/app.camera.zoom; ctx.setLineDash([5/app.camera.zoom, 3/app.camera.zoom]); ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.setLineDash([]); if (!app.selection.every(i => i.content !== undefined)) { ctx.fillStyle = '#fff'; const hs = 8/app.camera.zoom; const drawH = (cx, cy) => { ctx.fillRect(cx-hs/2, cy-hs/2, hs, hs); ctx.strokeRect(cx-hs/2, cy-hs/2, hs, hs); }; drawH(b.x, b.y); drawH(b.x+b.w, b.y); drawH(b.x, b.y+b.h); drawH(b.x+b.w, b.y+b.h); } } }
-            if((app.mode.startsWith('lasso') || app.mode === 'fill') && app.isSelecting && app.selectionPath.length > 0) { ctx.beginPath(); ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1/app.camera.zoom; ctx.setLineDash([4/app.camera.zoom, 4/app.camera.zoom]); if (app.mode === 'lasso-rect') { const s = app.selectionPath[0], e = app.selectionPath[app.selectionPath.length-1]; ctx.rect(s.x, s.y, e.x-s.x, e.y-s.y); } else { ctx.moveTo(app.selectionPath[0].x, app.selectionPath[0].y); for(let p of app.selectionPath) ctx.lineTo(p.x, p.y); if(app.mode === 'fill') ctx.closePath(); } ctx.stroke(); ctx.fillStyle = app.mode==='fill' ? app.colorString : 'rgba(59, 130, 246, 0.1)'; if(app.mode === 'fill') ctx.globalAlpha = 0.5; ctx.fill(); ctx.globalAlpha = 1; ctx.setLineDash([]); }
+            
+            // Logic for Selection Box Rendering (CAD Style)
+            if((app.mode === 'select' || app.mode === 'lasso-rect' || app.mode === 'lasso-free' || app.mode === 'fill') && app.isSelecting && app.selectionPath.length > 0) { 
+                ctx.beginPath(); 
+                
+                let isCrossing = false;
+                if (app.mode === 'select' || app.mode === 'lasso-rect') {
+                    const start = app.selectionPath[0];
+                    const end = app.selectionPath[app.selectionPath.length-1];
+                    isCrossing = end.x < start.x;
+                }
+
+                ctx.lineWidth = 1/app.camera.zoom; 
+                
+                // Color and Dash style based on direction
+                if (isCrossing) {
+                    ctx.strokeStyle = '#10b981'; // Green
+                    ctx.setLineDash([4/app.camera.zoom, 4/app.camera.zoom]); 
+                } else {
+                    ctx.strokeStyle = '#3b82f6'; // Blue
+                    ctx.setLineDash([]); 
+                }
+
+                if (app.mode === 'select' || app.mode === 'lasso-rect') { 
+                    const s = app.selectionPath[0], e = app.selectionPath[app.selectionPath.length-1]; 
+                    ctx.rect(s.x, s.y, e.x-s.x, e.y-s.y); 
+                } else { 
+                    ctx.setLineDash([4/app.camera.zoom, 4/app.camera.zoom]); // Lasso is always dashed blue usually, or keep consistent
+                    ctx.moveTo(app.selectionPath[0].x, app.selectionPath[0].y); 
+                    for(let p of app.selectionPath) ctx.lineTo(p.x, p.y); 
+                    if(app.mode === 'fill') ctx.closePath(); 
+                } 
+                ctx.stroke(); 
+                
+                // Fill Color
+                if (app.mode === 'fill') {
+                     ctx.fillStyle = app.colorString;
+                     ctx.globalAlpha = 0.5;
+                } else {
+                     ctx.fillStyle = isCrossing ? 'rgba(16, 185, 129, 0.1)' : 'rgba(59, 130, 246, 0.1)';
+                }
+                
+                ctx.fill(); 
+                ctx.globalAlpha = 1; 
+                ctx.setLineDash([]); 
+            }
             ctx.restore();
             
             const isBrush = BRUSH_TYPES.find(b => b.id === app.mode) || app.mode === 'eraser';
