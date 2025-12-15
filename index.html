@@ -358,6 +358,7 @@
             position: absolute;
             transform-origin: top left;
             pointer-events: all;
+            cursor: grab;
             /* Allow dragging container */
         }
 
@@ -867,8 +868,7 @@
         <div class="tool-options-panel" id="option-panel" style="display:none;">
             <div id="opt-size-group" class="flex items-center gap-2">
                 <span class="text-xs font-medium text-gray-500 w-8" id="option-label">Size</span>
-                <input type="range" id="option-slider" min="1" max="100" value="3" class="w-24"
-                    onmousedown="app.isDraggingSlider=true" ontouchstart="app.isDraggingSlider=true">
+                <input type="range" id="option-slider" min="1" max="100" value="3" class="w-24">
                 <span class="text-xs font-mono text-gray-400 w-6 text-right" id="option-val">3</span>
             </div>
             <div id="opt-angle-group" class="flex items-center gap-2 border-l border-gray-200 pl-2 ml-2"
@@ -1588,15 +1588,27 @@
 
                 if (app.transformBox && app.selection.length > 0) {
                     const hit = hitTest(pos);
-                    if (hit && (hit === 'tl' || hit === 'tr' || hit === 'bl' || hit === 'br' || hit === 'body')) {
+                    if (hit && (hit === 'tl' || hit === 'tr' || hit === 'bl' || hit === 'br' || hit === 'body' || hit === 'rot')) {
                         app.isTransforming = true;
                         app.activeHandle = hit;
                         app.lastPos = pos;
+
+                        const transformItems = app.selection.map(i => ({ ref: i, x: i.x, y: i.y, w: i.w, h: i.h, fontSize: i.fontSize, rotation: i.rotation || 0, pts: i.points ? JSON.parse(JSON.stringify(i.points)) : null }));
                         app.transformSnapshot = {
                             startPos: pos,
                             startBox: { ...app.transformBox },
-                            items: app.selection.map(i => ({ ref: i, x: i.x, y: i.y, w: i.w, h: i.h, fontSize: i.fontSize, pts: i.points ? JSON.parse(JSON.stringify(i.points)) : null }))
+                            items: transformItems
                         };
+
+                        if (app.activeHandle === 'rot') {
+                            const b = app.transformBox;
+                            const bx = b.x + b.w / 2;
+                            const by = b.y + b.h / 2;
+                            app.transformSnapshot.center = { x: bx, y: by };
+                            app.transformSnapshot.startAngle = Math.atan2(pos.y - by, pos.x - bx);
+                            app.selectionRotation = 0;
+                        }
+
                         return;
                     }
                 }
@@ -1611,15 +1623,27 @@
                     }
                     updateTransformBox();
                     syncUIToSelection(); // Sync UI with clicked item
-                    app.isTransforming = true;
-                    app.activeHandle = 'body';
-                    app.lastPos = pos;
-                    app.transformSnapshot = {
-                        startPos: pos,
-                        startBox: { ...app.transformBox },
-                        items: app.selection.map(i => ({ ref: i, x: i.x, y: i.y, w: i.w, h: i.h, fontSize: i.fontSize, pts: i.points ? JSON.parse(JSON.stringify(i.points)) : null }))
-                    };
-                    return; // Hit object, start transform
+                    if (app.activeHandle) {
+                        app.isTransforming = true;
+                        app.lastPos = pos;
+                        const transformItems = app.selection.map(i => ({ ref: i, x: i.x, y: i.y, w: i.w, h: i.h, fontSize: i.fontSize, rotation: i.rotation || 0, pts: i.points ? JSON.parse(JSON.stringify(i.points)) : null }));
+                        app.transformSnapshot = {
+                            startPos: pos,
+                            startBox: { ...app.transformBox },
+                            items: transformItems
+                        };
+
+                        if (app.activeHandle === 'rot') {
+                            const b = app.transformBox;
+                            const bx = b.x + b.w / 2;
+                            const by = b.y + b.h / 2;
+                            app.transformSnapshot.center = { x: bx, y: by };
+                            app.transformSnapshot.startAngle = Math.atan2(pos.y - by, pos.x - bx);
+                            app.selectionRotation = 0;
+                        }
+
+                        return;
+                    }
                 } else {
                     // Clicked empty space: Start Selection Drag
                     if (!e.shiftKey) clearSelection();
@@ -1712,6 +1736,25 @@
                 const dx = pos.x - app.transformSnapshot.startPos.x;
                 const dy = pos.y - app.transformSnapshot.startPos.y;
                 const snap = app.transformSnapshot;
+
+                if (app.activeHandle === 'rot') {
+                    // ROTATION LOGIC
+                    const snap = app.transformSnapshot;
+                    const center = snap.center;
+                    const currentAngle = Math.atan2(pos.y - center.y, pos.x - center.x);
+                    let angleDiff = currentAngle - snap.startAngle;
+
+                    if (e.shiftKey) {
+                        // Snap to 15 degrees
+                        const deg = angleDiff * 180 / Math.PI;
+                        const snapDeg = Math.round(deg / 15) * 15;
+                        angleDiff = snapDeg * Math.PI / 180;
+                    }
+
+                    app.selectionRotation = angleDiff;
+                    requestRender();
+                    return;
+                }
 
                 if (app.activeHandle === 'body') {
                     snap.items.forEach(item => {
@@ -1863,6 +1906,62 @@
 
             if (app.isTransforming) {
                 app.isTransforming = false;
+
+                // Commit Rotation
+                if (app.activeHandle === 'rot' && app.selectionRotation !== 0) {
+                    const angle = app.selectionRotation;
+                    const center = app.transformSnapshot.center;
+                    const cos = Math.cos(angle);
+                    const sin = Math.sin(angle);
+
+                    app.selection.forEach(item => {
+                        // For images/notes/strokes, we rotate their position around the group center
+                        const dx = item.x - center.x;
+                        const dy = item.y - center.y;
+
+                        // New center position for the item
+                        // NOTE: For objects with width/height, item.x is top-left.
+                        // We need to rotate the item's CENTER around the group center?
+                        // Actually, standard affine transform: Rotate point (item.x, item.y) around (center.x, center.y) is correct for position.
+                        // But for visual correctness of checks, we usually rotate the object's CENTER.
+                        // Let's stick to Top-Left reference rotation for now, consistent with move/scale.
+
+                        // Rotate position
+                        // x' = cx + (x-cx)cos - (y-cy)sin
+                        // y' = cy + (x-cx)sin + (y-cy)cos
+
+                        // Be careful: strokes have points. item.x/y might be just bounding box top-left.
+                        // For strokes, we must rotate individual points.
+
+                        if (item.points) {
+                            item.points = item.points.map(p => {
+                                const px = p.x - center.x;
+                                const py = p.y - center.y;
+                                return {
+                                    x: center.x + px * cos - py * sin,
+                                    y: center.y + px * sin + py * cos
+                                };
+                            });
+                            // item.x/y/aabb will be updated by getStrokeAABB later or next render
+                            delete item.aabb;
+                        } else {
+                            // Images / Notes: Rotate position AND add to rotation property
+                            // We need to rotate the "anchor" (top-left) around the center
+                            // BUT, rotating top-left is not enough, the object itself rotates.
+
+                            // 1. Rotate the top-left position around the group center
+                            const rx = dx * cos - dy * sin;
+                            const ry = dx * sin + dy * cos;
+                            item.x = center.x + rx;
+                            item.y = center.y + ry;
+
+                            // 2. Add rotation to the object itself
+                            item.rotation = (item.rotation || 0) + angle;
+                        }
+                    });
+                    app.selectionRotation = 0;
+                }
+
                 saveState();
                 updateTransformBox(); // Re-calc formatting and show menu
                 syncUIToSelection(); // Sync UI after transform
@@ -2349,14 +2448,37 @@
                             updateTransformBox();
                             syncUIToSelection(); // Sync for text too
                             app.isTransforming = true; app.activeHandle = 'body';
-                            app.transformSnapshot = { startPos: getWorldPos(e), startBox: { ...app.transformBox }, items: app.selection.map(i => ({ ref: i, x: i.x, y: i.y, w: i.w, h: i.h, fontSize: i.fontSize })) };
+                            app.transformSnapshot = { startPos: getWorldPos(e), startBox: { ...app.transformBox }, items: app.selection.map(i => ({ ref: i, x: i.x, y: i.y, w: i.w, h: i.h, fontSize: i.fontSize, rotation: i.rotation || 0 })) };
+
+                            // Capture pointer to ensure drag events fire
+                            el.setPointerCapture(e.pointerId);
+                            el.onpointermove = (ev) => handlePointerMove(ev);
+                            el.onpointerup = (ev) => {
+                                handlePointerUp(ev);
+                                el.releasePointerCapture(ev.pointerId);
+                                el.onpointermove = null;
+                                el.onpointerup = null;
+                            };
                         }
                     });
                     try { lucide.createIcons(); } catch (e) { }
                 }
                 const sx = note.x * app.camera.zoom + app.camera.x;
                 const sy = note.y * app.camera.zoom + app.camera.y;
-                el.style.transform = `translate(${sx}px, ${sy}px) scale(${app.camera.zoom})`;
+                const rot = note.rotation || 0;
+                el.style.transform = `translate(${sx}px, ${sy}px) scale(${app.camera.zoom}) rotate(${rot}rad)`;
+                // Fix anchor point for rotation if needed, default is center? No, 0 0 usually.
+                // We rotate around center in logic, so we might need to adjust origin or translate
+                // Standard CSS rotate is around center if not specified, but we set transform-origin: top left in CSS previously?
+                // CSS: .note-element { transform-origin: 0 0; }
+                // If we rotate top-left, it matches our simple logic if we updated x/y to be the top-left corner post-rotation.
+                // BUT, our logic updated x/y to be the top-left corner of the non-rotated box in world space? 
+                // Wait, if we rotate the object around its center, the top-left corner moves. 
+                // In handlePointerUp, we adjusted note.x/y to be the NEW top-left(?) position...
+                // Actually, for HTML elements, x/y is usually top-left.
+                // If we use `rotate(${rot}rad)`, and origin is 0 0, it rotates around the top-left corner.
+                // This matches if our data model x/y represents the top-left corner of the rotated box?
+                // Let's assume yes for now. If it wobbles, we change origin.
 
                 const layer = app.layers.find(l => l.id === note.layerId);
                 el.style.display = (layer && layer.visible) ? 'flex' : 'none';
@@ -2398,6 +2520,32 @@
                 if (el) { const r = el.getBoundingClientRect(); return { x: (r.left - app.camera.x) / app.camera.zoom, y: (r.top - app.camera.y) / app.camera.zoom, w: r.width / app.camera.zoom, h: r.height / app.camera.zoom }; }
                 return { x: item.x, y: item.y, w: 100, h: 50 };
             }
+            // Image with Rotation
+            if (item.rotation) {
+                const cx = item.x + item.w / 2;
+                const cy = item.y + item.h / 2;
+                const cos = Math.cos(item.rotation);
+                const sin = Math.sin(item.rotation);
+                // 4 corners relative to center
+                const w2 = item.w / 2;
+                const h2 = item.h / 2;
+                const corners = [
+                    { x: -w2, y: -h2 },
+                    { x: w2, y: -h2 },
+                    { x: w2, y: h2 },
+                    { x: -w2, y: h2 }
+                ];
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                corners.forEach(p => {
+                    const rx = p.x * cos - p.y * sin + cx;
+                    const ry = p.x * sin + p.y * cos + cy;
+                    if (rx < minX) minX = rx;
+                    if (rx > maxX) maxX = rx;
+                    if (ry < minY) minY = ry;
+                    if (ry > maxY) maxY = ry;
+                });
+                return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+            }
             return { x: item.x, y: item.y, w: item.w, h: item.h };
         }
 
@@ -2425,12 +2573,44 @@
                 document.getElementById('ctx-btn-color').style.display = 'flex';
                 document.getElementById('ctx-btn-adjust').style.display = hasImg ? 'flex' : 'none';
             } else { menu.style.display = 'none'; }
-            // syncUIToSelection(); // Removed for performance
         }
 
         function hitTest(pos) {
-            if (app.transformBox) { const b = app.transformBox; const hs = 10 / app.camera.zoom; if (Math.abs(pos.x - b.x) < hs && Math.abs(pos.y - b.y) < hs) return 'tl'; if (Math.abs(pos.x - (b.x + b.w)) < hs && Math.abs(pos.y - b.y) < hs) return 'tr'; if (Math.abs(pos.x - b.x) < hs && Math.abs(pos.y - (b.y + b.h)) < hs) return 'bl'; if (Math.abs(pos.x - (b.x + b.w)) < hs && Math.abs(pos.y - (b.y + b.h)) < hs) return 'br'; if (pos.x >= b.x && pos.x <= b.x + b.w && pos.y >= b.y && pos.y <= b.y + b.h) return 'body'; }
-            for (let i = app.images.length - 1; i >= 0; i--) { const item = app.images[i]; const layer = app.layers.find(l => l.id === item.layerId); if (!layer || !layer.visible || layer.locked) continue; if (pos.x >= item.x && pos.x <= item.x + item.w && pos.y >= item.y && pos.y <= item.y + item.h) return item; }
+            if (app.transformBox) {
+                const b = app.transformBox;
+                const hs = 10 / app.camera.zoom;
+                // Rotation Handle (Bottom Center, floating below)
+                const rotX = b.x + b.w / 2;
+                const rotY = b.y + b.h + 30 / app.camera.zoom; // 30px below
+                if (Math.abs(pos.x - rotX) < hs && Math.abs(pos.y - rotY) < hs) return 'rot';
+
+                if (Math.abs(pos.x - b.x) < hs && Math.abs(pos.y - b.y) < hs) return 'tl';
+                if (Math.abs(pos.x - (b.x + b.w)) < hs && Math.abs(pos.y - b.y) < hs) return 'tr';
+                if (Math.abs(pos.x - b.x) < hs && Math.abs(pos.y - (b.y + b.h)) < hs) return 'bl';
+                if (Math.abs(pos.x - (b.x + b.w)) < hs && Math.abs(pos.y - (b.y + b.h)) < hs) return 'br';
+                if (pos.x >= b.x && pos.x <= b.x + b.w && pos.y >= b.y && pos.y <= b.y + b.h) return 'body';
+            }
+            for (let i = app.images.length - 1; i >= 0; i--) {
+                const item = app.images[i];
+                const layer = app.layers.find(l => l.id === item.layerId);
+                if (!layer || !layer.visible || layer.locked) continue;
+
+                // Rotated Check
+                if (item.rotation) {
+                    const cx = item.x + item.w / 2;
+                    const cy = item.y + item.h / 2;
+                    const cos = Math.cos(-item.rotation);
+                    const sin = Math.sin(-item.rotation);
+                    const dx = pos.x - cx;
+                    const dy = pos.y - cy;
+                    const rx = dx * cos - dy * sin;
+                    const ry = dx * sin + dy * cos;
+                    // Check local unrotated box (centered at 0,0)
+                    if (rx >= -item.w / 2 && rx <= item.w / 2 && ry >= -item.h / 2 && ry <= item.h / 2) return item;
+                } else {
+                    if (pos.x >= item.x && pos.x <= item.x + item.w && pos.y >= item.y && pos.y <= item.y + item.h) return item;
+                }
+            }
             for (let i = app.strokes.length - 1; i >= 0; i--) { const s = app.strokes[i]; const layer = app.layers.find(l => l.id === s.layerId); if (!layer || !layer.visible || layer.locked) continue; if (!s.aabb) s.aabb = getStrokeAABB(s.points); const b = s.aabb; if (pos.x >= b.x - 5 && pos.x <= b.x + b.w + 5 && pos.y >= b.y - 5 && pos.y <= b.y + b.h + 5) return s; }
             return null;
         }
@@ -2635,25 +2815,39 @@
         };
 
 
-        document.getElementById('option-slider').oninput = (e) => {
-            if (app.mode === 'magic-wand') app.magicWand.tolerance = parseInt(e.target.value);
-            else if (app.selection.length > 0 && app.selection.some(i => i.points)) {
-                const val = parseInt(e.target.value);
-                app.selection.forEach(item => {
-                    if (item.points) item.size = val;
-                });
-                document.getElementById('option-val').innerText = val;
-                requestRender();
-            }
-            else app.toolSize[app.mode] = parseInt(e.target.value);
+        // Explicitly safely attach listeners
+        const optSlider = document.getElementById('option-slider');
+        if (optSlider) {
+            optSlider.onmousedown = () => { app.isDraggingSlider = true; };
+            optSlider.ontouchstart = () => { app.isDraggingSlider = true; };
+            // Ensure we clear dragging state on blur or just rely on global up
 
-            if (app.mode !== 'select') {
-                document.getElementById('option-val').innerText = e.target.value;
-            }
-        };
-        document.getElementById('option-slider').onchange = (e) => {
-            if (app.selection.length > 0 && app.selection.some(i => i.points)) saveState();
-        };
+            optSlider.oninput = (e) => {
+                app.isDraggingSlider = true; // Ensure true on input
+                const newVal = parseInt(e.target.value);
+
+                if (app.mode === 'magic-wand') {
+                    app.magicWand.tolerance = newVal;
+                } else if (app.selection.length > 0 && app.selection.some(i => i.points)) {
+                    app.selection.forEach(item => {
+                        if (item.points) item.size = newVal;
+                    });
+                    document.getElementById('option-val').innerText = newVal;
+                    requestRender();
+                } else {
+                    app.toolSize[app.mode] = newVal;
+                }
+
+                if (app.mode !== 'select' || app.selection.length === 0) {
+                    document.getElementById('option-val').innerText = newVal;
+                }
+            };
+
+            optSlider.onchange = (e) => {
+                app.isDraggingSlider = false; // Reset on commit
+                if (app.selection.length > 0 && app.selection.some(i => i.points)) saveState();
+            };
+        }
 
 
 
@@ -2667,7 +2861,24 @@
                 bufferCtx.clearRect(0, 0, bufferCanvas.width, bufferCanvas.height); bufferCtx.save();
                 bufferCtx.globalAlpha = layer.opacity !== undefined ? layer.opacity : 1.0;
                 bufferCtx.translate(app.camera.x, app.camera.y); bufferCtx.scale(app.camera.zoom, app.camera.zoom);
-                app.images.forEach(img => { if (img.layerId === layer.id && img.imgElement?.complete) { bufferCtx.save(); if (img.filters) bufferCtx.filter = `hue-rotate(${img.filters.hue}deg) saturate(${img.filters.sat}%) brightness(${img.filters.bri * (img.filters.exp ? img.filters.exp / 100 : 1)}%) contrast(${img.filters.con || 100}%)`; bufferCtx.drawImage(img.imgElement, img.x, img.y, img.w, img.h); bufferCtx.restore(); if (app.pixelSelection && app.pixelSelection.imageId === img.id && app.pixelSelection.maskCanvas) bufferCtx.drawImage(app.pixelSelection.maskCanvas, img.x, img.y, img.w, img.h); } });
+                app.images.forEach(img => {
+                    if (img.layerId === layer.id && img.imgElement?.complete) {
+                        bufferCtx.save();
+                        // Apply Rotation
+                        if (img.rotation) {
+                            const cx = img.x + img.w / 2;
+                            const cy = img.y + img.h / 2;
+                            bufferCtx.translate(cx, cy);
+                            bufferCtx.rotate(img.rotation);
+                            bufferCtx.translate(-cx, -cy);
+                        }
+
+                        if (img.filters) bufferCtx.filter = `hue-rotate(${img.filters.hue}deg) saturate(${img.filters.sat}%) brightness(${img.filters.bri * (img.filters.exp ? img.filters.exp / 100 : 1)}%) contrast(${img.filters.con || 100}%)`;
+                        bufferCtx.drawImage(img.imgElement, img.x, img.y, img.w, img.h);
+                        bufferCtx.restore();
+                        if (app.pixelSelection && app.pixelSelection.imageId === img.id && app.pixelSelection.maskCanvas) bufferCtx.drawImage(app.pixelSelection.maskCanvas, img.x, img.y, img.w, img.h);
+                    }
+                });
                 bufferCtx.lineCap = 'round'; bufferCtx.lineJoin = 'round';
                 app.strokes.forEach(stroke => { if (stroke.layerId !== layer.id) return; bufferCtx.save(); if (stroke.isEraser) { bufferCtx.globalCompositeOperation = 'destination-out'; bufferCtx.strokeStyle = 'rgba(0,0,0,1)'; bufferCtx.lineWidth = stroke.size; drawStroke(bufferCtx, stroke); } else if (stroke.type === 'fill') { bufferCtx.fillStyle = stroke.color; bufferCtx.beginPath(); if (stroke.points.length > 0) { bufferCtx.moveTo(stroke.points[0].x, stroke.points[0].y); for (let i = 1; i < stroke.points.length; i++) bufferCtx.lineTo(stroke.points[i].x, stroke.points[i].y); bufferCtx.closePath(); bufferCtx.fill(); } } else if (stroke.type === 'watercolor') { bufferCtx.globalCompositeOperation = 'multiply'; bufferCtx.globalAlpha = 0.5 * (layer.opacity || 1); bufferCtx.strokeStyle = stroke.color; bufferCtx.lineWidth = stroke.size; drawStroke(bufferCtx, stroke); } else if (stroke.type === 'pencil') { bufferCtx.strokeStyle = stroke.color; bufferCtx.lineWidth = stroke.size; bufferCtx.globalAlpha = 0.8 * (layer.opacity || 1); bufferCtx.setLineDash([2, 4]); bufferCtx.lineCap = 'butt'; bufferCtx.shadowBlur = 1; bufferCtx.shadowColor = stroke.color; drawStroke(bufferCtx, stroke); bufferCtx.setLineDash([4, 2]); bufferCtx.globalAlpha = 0.4 * (layer.opacity || 1); drawStroke(bufferCtx, stroke); } else { bufferCtx.strokeStyle = stroke.color; bufferCtx.lineWidth = stroke.size; drawStroke(bufferCtx, stroke); } bufferCtx.restore(); });
                 bufferCtx.restore(); ctx.drawImage(bufferCanvas, 0, 0);
@@ -2685,7 +2896,51 @@
             }
 
             ctx.save(); ctx.translate(app.camera.x, app.camera.y); ctx.scale(app.camera.zoom, app.camera.zoom);
-            if (app.selection.length > 0) { ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1 / app.camera.zoom; app.selection.forEach(item => { const b = getBounds(item); ctx.strokeRect(b.x, b.y, b.w, b.h); }); if (app.transformBox) { const b = app.transformBox; ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5 / app.camera.zoom; ctx.setLineDash([5 / app.camera.zoom, 3 / app.camera.zoom]); ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.setLineDash([]); if (!app.selection.every(i => i.content !== undefined)) { ctx.fillStyle = '#fff'; const hs = 8 / app.camera.zoom; const drawH = (cx, cy) => { ctx.fillRect(cx - hs / 2, cy - hs / 2, hs, hs); ctx.strokeRect(cx - hs / 2, cy - hs / 2, hs, hs); }; drawH(b.x, b.y); drawH(b.x + b.w, b.y); drawH(b.x, b.y + b.h); drawH(b.x + b.w, b.y + b.h); } } }
+            if (app.selection.length > 0) {
+                // Apply visual rotation during drag
+                ctx.save();
+                if (app.isTransforming && app.activeHandle === 'rot' && app.selectionRotation) {
+                    const center = app.transformSnapshot.center;
+                    ctx.translate(center.x, center.y);
+                    ctx.rotate(app.selectionRotation);
+                    ctx.translate(-center.x, -center.y);
+                }
+
+                ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1 / app.camera.zoom;
+                app.selection.forEach(item => { const b = getBounds(item); ctx.strokeRect(b.x, b.y, b.w, b.h); });
+
+                if (app.transformBox) {
+                    const b = app.transformBox;
+                    ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5 / app.camera.zoom;
+                    ctx.setLineDash([5 / app.camera.zoom, 3 / app.camera.zoom]);
+                    ctx.strokeRect(b.x, b.y, b.w, b.h);
+                    ctx.setLineDash([]);
+
+                    if (!app.selection.every(i => i.content !== undefined)) {
+                        ctx.fillStyle = '#fff';
+                        const hs = 8 / app.camera.zoom;
+                        const drawH = (cx, cy) => { ctx.fillRect(cx - hs / 2, cy - hs / 2, hs, hs); ctx.strokeRect(cx - hs / 2, cy - hs / 2, hs, hs); };
+                        drawH(b.x, b.y); drawH(b.x + b.w, b.y); drawH(b.x, b.y + b.h); drawH(b.x + b.w, b.y + b.h);
+
+                        // Draw Rotation Handle (Bottom)
+                        const rotX = b.x + b.w / 2;
+                        const rotY = b.y + b.h + 30 / app.camera.zoom;
+
+                        ctx.beginPath();
+                        ctx.moveTo(b.x + b.w / 2, b.y + b.h);
+                        ctx.lineTo(rotX, rotY);
+                        ctx.strokeStyle = '#3b82f6';
+                        ctx.stroke();
+
+                        ctx.beginPath();
+                        ctx.arc(rotX, rotY, 5 / app.camera.zoom, 0, Math.PI * 2);
+                        ctx.fillStyle = '#fff';
+                        ctx.fill();
+                        ctx.stroke();
+                    }
+                }
+                ctx.restore();
+            }
 
             // Logic for Selection Box Rendering (CAD Style)
             if ((app.mode === 'select' || app.mode === 'lasso-rect' || app.mode === 'lasso-free' || app.mode === 'fill' || app.mode === 'cut-lasso') && app.isSelecting && app.selectionPath.length > 0) {
