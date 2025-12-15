@@ -2704,7 +2704,7 @@
 
         function saveState() { const s = { s: app.strokes, n: app.notes, i: app.images, l: app.layers }; app.historyStack = app.historyStack.slice(0, app.historyIndex + 1); app.historyStack.push(JSON.stringify(s)); app.historyIndex++; if (app.historyStack.length > 20) { app.historyStack.shift(); app.historyIndex--; } }
 
-        function restore(json) { const s = JSON.parse(json); app.strokes = s.s; app.notes = s.n; app.layers = s.l; app.images = s.i.map(raw => { const img = new Image(); img.src = raw.src; return { ...raw, imgElement: img }; }); renderLayerList(); requestRender(); }
+        function restore(json) { const s = JSON.parse(json); app.strokes = s.s; app.notes = s.n; app.layers = s.l; app.images = s.i.map(raw => { const img = new Image(); img.onload = () => requestRender(); img.src = raw.src; return { ...raw, imgElement: img }; }); renderLayerList(); requestRender(); }
 
         document.getElementById('btn-undo').onclick = () => { if (app.historyIndex > 0) { app.historyIndex--; restore(app.historyStack[app.historyIndex]); } };
         document.getElementById('btn-redo').onclick = () => { if (app.historyIndex < app.historyStack.length - 1) { app.historyIndex++; restore(app.historyStack[app.historyIndex]); } };
@@ -2974,6 +2974,7 @@
                         bufferCtx.drawImage(img.imgElement, img.x, img.y, img.w, img.h);
                         bufferCtx.restore();
                         if (app.pixelSelection && app.pixelSelection.imageId === img.id && app.pixelSelection.maskCanvas) bufferCtx.drawImage(app.pixelSelection.maskCanvas, img.x, img.y, img.w, img.h);
+                        bufferCtx.restore();
                     }
                 });
                 bufferCtx.lineCap = 'round'; bufferCtx.lineJoin = 'round';
