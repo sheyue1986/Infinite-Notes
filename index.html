@@ -354,6 +354,41 @@
             pointer-events: none;
         }
 
+        .note-element {
+            position: absolute;
+            transform-origin: top left;
+            pointer-events: all;
+            /* Allow dragging container */
+        }
+
+        .note-content {
+            width: 100%;
+            height: 100%;
+            background: transparent;
+            border: none;
+            resize: none;
+            outline: none;
+            font-family: sans-serif;
+            overflow: hidden;
+            pointer-events: none;
+            /* Disable text interaction by default */
+        }
+
+        .note-content.editing {
+            pointer-events: auto;
+            /* Enable when editing */
+            cursor: text;
+        }
+
+        #native-color-picker {
+            width: 100%;
+            height: 100%;
+            border-radius: 4px;
+            padding: 0;
+            border: none;
+            cursor: pointer;
+        }
+
         .tool-group {
             position: relative;
         }
@@ -832,7 +867,8 @@
         <div class="tool-options-panel" id="option-panel" style="display:none;">
             <div id="opt-size-group" class="flex items-center gap-2">
                 <span class="text-xs font-medium text-gray-500 w-8" id="option-label">Size</span>
-                <input type="range" id="option-slider" min="1" max="100" value="3" class="w-24">
+                <input type="range" id="option-slider" min="1" max="100" value="3" class="w-24"
+                    onmousedown="app.isDraggingSlider=true" ontouchstart="app.isDraggingSlider=true">
                 <span class="text-xs font-mono text-gray-400 w-6 text-right" id="option-val">3</span>
             </div>
             <div id="opt-angle-group" class="flex items-center gap-2 border-l border-gray-200 pl-2 ml-2"
@@ -949,7 +985,7 @@
             <div class="tool-btn" style="padding: 2px;" title="Color">
                 <input type="color" id="native-color-picker"
                     class="w-full h-full cursor-pointer p-0 border-0 rounded bg-transparent" value="#000000"
-                    oninput="updateMainColor(this.value)">
+                    oninput="updateMainColor(this.value)" onchange="updateMainColor(this.value)">
             </div>
 
             <div class="w-px h-4 bg-gray-300 mx-1"></div>
@@ -969,7 +1005,7 @@
         <div class="ctx-item" onclick="groupSelection()"><i data-lucide="group" size="14"></i> 打組 (Ctrl+G)</div>
         <div class="ctx-item" onclick="ungroupSelection()"><i data-lucide="ungroup" size="14"></i> 解組 (Ctrl+Shift+G)
         </div>
-        <div id="ctx-btn-color" class="ctx-item" style="display:none;" onclick="triggerGroupRecolor()"><i
+        <div id="ctx-btn-color" class="ctx-item" style="display:none;" onclick="toggleColorPicker()"><i
                 data-lucide="palette" size="14"></i> 改色</div>
         <div id="ctx-btn-adjust" class="ctx-item" style="display:none;" onclick="openImgAdjust()"><i
                 data-lucide="sliders" size="14"></i> 調整</div>
@@ -1105,22 +1141,24 @@
                 const label = document.getElementById('option-label');
                 const valDisplay = document.getElementById('option-val');
 
-                if (app.mode === 'magic-wand') {
-                    label.innerText = "Tol";
-                    slider.max = 100;
-                    slider.value = app.magicWand.tolerance;
-                } else if (hasStrokeSelection) {
-                    label.innerText = "Size";
-                    slider.max = 100;
-                    // Take size of first selected stroke
-                    const stroke = app.selection.find(i => i.points);
-                    slider.value = stroke ? stroke.size : 3;
-                } else {
-                    label.innerText = "Size";
-                    slider.max = 100;
-                    slider.value = app.toolSize[app.mode] || 3;
+                if (!app.isDraggingSlider && document.activeElement !== slider) {
+                    if (app.mode === 'magic-wand') {
+                        label.innerText = "Tol";
+                        slider.max = 100;
+                        slider.value = app.magicWand.tolerance;
+                    } else if (hasStrokeSelection) {
+                        label.innerText = "Size";
+                        slider.max = 100;
+                        // Take size of first selected stroke
+                        const stroke = app.selection.find(i => i.points);
+                        slider.value = stroke ? stroke.size : 3;
+                    } else {
+                        label.innerText = "Size";
+                        slider.max = 100;
+                        slider.value = app.toolSize[app.mode] || 3;
+                    }
+                    valDisplay.innerText = slider.value;
                 }
-                valDisplay.innerText = slider.value;
             } else {
                 optionPanel.style.display = 'none';
             }
@@ -1456,6 +1494,10 @@
             srcImg.src = newImg.src;
         }
 
+
+        // Initialize Dragging Flag
+        app.isDraggingSlider = false;
+
         // --- INPUT HANDLING ---
 
         function getWorldPos(e) {
@@ -1740,7 +1782,17 @@
                         }
                     }
                 });
-                updateTransformBox();
+                // updateTransformBox(); // Optimize: don't recalculate AABB while dragging
+                // Manually update AABB for Body Move
+                if (app.activeHandle === 'body' && app.transformBox) {
+                    app.transformBox.x = snap.startBox.x + dx;
+                    app.transformBox.y = snap.startBox.y + dy;
+                    // Hide menu during drag
+                    document.getElementById('sel-context-menu').style.display = 'none';
+                } else {
+                    updateTransformBox(); // Keep for scaling for now
+                    document.getElementById('sel-context-menu').style.display = 'none';
+                }
                 requestRender();
                 return;
             }
@@ -1807,7 +1859,15 @@
         function handlePointerUp(e) {
             if (app.isPanning) { app.isPanning = false; updateToolUI(); return; }
             if (app.isDraggingVP >= 0) { app.isDraggingVP = -1; return; }
-            if (app.isTransforming) { app.isTransforming = false; saveState(); return; }
+            if (app.isDraggingSlider) { app.isDraggingSlider = false; } // Reset slider flag
+
+            if (app.isTransforming) {
+                app.isTransforming = false;
+                saveState();
+                updateTransformBox(); // Re-calc formatting and show menu
+                syncUIToSelection(); // Sync UI after transform
+                return;
+            }
 
             if (app.isDrawing) {
                 app.isDrawing = false;
@@ -1923,6 +1983,7 @@
                 // If we were in lasso, switch to select to transform
                 if (app.mode.startsWith('lasso')) window.setTool('select');
                 updateTransformBox();
+                syncUIToSelection();
             }
         }
 
@@ -2180,12 +2241,24 @@
                 if (app.clipboard && app.clipboard.length > 0) {
                     clearSelection();
                     const newItems = [];
+                    // Group ID mapping
+                    const groupIdMap = {};
+
                     app.clipboard.forEach(item => {
                         // Create fresh copy
                         const newItem = JSON.parse(JSON.stringify(item));
                         newItem.id = Date.now() + Math.random();
                         newItem.x += 20; // Offset
                         newItem.y += 20;
+
+                        // Handle Groups
+                        if (newItem.groupId) {
+                            if (!groupIdMap[newItem.groupId]) {
+                                groupIdMap[newItem.groupId] = Date.now() + Math.random();
+                            }
+                            newItem.groupId = groupIdMap[newItem.groupId];
+                        }
+
                         if (newItem.points) {
                             newItem.points = newItem.points.map(p => ({ x: p.x + 20, y: p.y + 20 }));
                             delete newItem.aabb; // Invalidate AABB
@@ -2201,8 +2274,7 @@
                         } else if (newItem.content !== undefined) {
                             // Note
                             app.notes.push(newItem);
-                            // DOM creation happens in updateNotesDOM or we need to trigger it
-                            // updateNotesDOM handles missing elements
+                            // DOM creation happens in updateNotesDOM
                         }
                         newItems.push(newItem);
                     });
@@ -2243,14 +2315,31 @@
                 let el = document.getElementById('note-' + note.id);
                 if (!el) {
                     el = document.createElement('div'); el.className = 'note-element'; el.id = 'note-' + note.id;
-                    el.innerHTML = `<div class="note-header"><input type="number" class="note-input-num" value="${note.fontSize}" onchange="updateFont(parseInt(this.value), ${note.id})" title="Font Size"><input type="color" class="note-input-color" value="${note.color || '#000000'}" onchange="updateNoteColor(this.value, ${note.id})" title="Text Color"><select class="font-select" onchange="updateFontFamily(this.value, ${note.id})">${FONTS.map(f => `<option value="${f}">${f.split(' ')[0]}</option>`).join('')}</select><div class="note-btn-close" onclick="deleteNote(${note.id})"><i data-lucide="x" width="12"></i></div></div><textarea class="note-content" placeholder="Type here..."></textarea>`;
+                    el.innerHTML = `<div class="note-header"><input type="number" class="note-input-num" value="${note.fontSize}" onchange="updateFont(parseInt(this.value), ${note.id})" title="Font Size"><input type="color" class="note-input-color" value="${note.color || '#000000'}" onchange="updateNoteColor(this.value, ${note.id})" title="Text Color"><select class="font-select" onchange="updateFontFamily(this.value, ${note.id})">${FONTS.map(f => `<option value="${f}">${f.split(' ')[0]}</option>`).join('')}</select><div class="note-btn-close" onclick="deleteNote(${note.id})"><i data-lucide="x" width="12"></i></div></div><textarea class="note-content" placeholder="Type here..." spellcheck="false"></textarea>`;
                     uiLayer.appendChild(el);
                     const txt = el.querySelector('textarea');
+
+                    // Interaction: Click to drag (via container), Double-Click to edit
+                    el.ondblclick = (e) => {
+                        e.stopPropagation(); // Prevent canvas handlers
+                        txt.classList.add('editing');
+                        txt.focus();
+                    };
+
                     txt.oninput = (e) => { note.content = e.target.value; txt.style.height = 'auto'; txt.style.height = txt.scrollHeight + 'px'; };
-                    txt.onkeydown = (e) => { if (e.key === 'Escape') { e.target.blur(); } };
-                    txt.onblur = (e) => { if (!note.content || note.content.trim() === '') { deleteNote(note.id); } };
+                    txt.onkeydown = (e) => { if (e.key === 'Escape') { txt.blur(); } }; // Blur on Escape
+                    txt.onblur = (e) => {
+                        txt.classList.remove('editing');
+                        if (!note.content || note.content.trim() === '') { deleteNote(note.id); }
+                    };
                     el.addEventListener('pointerdown', e => {
-                        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+                        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+                        // Allow textarea interaction ONLY if editing
+                        if (e.target.tagName === 'TEXTAREA' && txt.classList.contains('editing')) {
+                            e.stopPropagation();
+                            return;
+                        }
+
                         const l = app.layers.find(ly => ly.id === note.layerId);
                         if (l && l.locked) return;
                         if (app.mode === 'select') {
@@ -2279,6 +2368,10 @@
                 txt.style.fontFamily = note.font;
                 txt.style.fontSize = note.fontSize + 'px';
                 txt.style.color = note.color || '#000000';
+                if (!txt.style.height || txt.style.height === '0px') {
+                    // Auto-size initial
+                    setTimeout(() => { txt.style.height = 'auto'; txt.style.height = txt.scrollHeight + 'px'; }, 0);
+                }
                 el.querySelector('select').value = note.font;
                 el.querySelector('.note-input-num').value = note.fontSize;
                 el.querySelector('.note-input-color').value = note.color || '#000000';
@@ -2329,9 +2422,10 @@
                 const b = app.transformBox;
                 const sx = (b.x + b.w / 2) * app.camera.zoom + app.camera.x; const sy = b.y * app.camera.zoom + app.camera.y;
                 menu.style.display = 'flex'; menu.style.left = sx + 'px'; menu.style.top = (sy - 10) + 'px'; menu.style.transform = 'translate(-50%, -100%)';
-                document.getElementById('ctx-btn-color').style.display = hasGroup ? 'flex' : 'none';
+                document.getElementById('ctx-btn-color').style.display = 'flex';
                 document.getElementById('ctx-btn-adjust').style.display = hasImg ? 'flex' : 'none';
             } else { menu.style.display = 'none'; }
+            // syncUIToSelection(); // Removed for performance
         }
 
         function hitTest(pos) {
@@ -2373,7 +2467,23 @@
         };
         window.groupSelection = () => { if (app.selection.length < 1) return; const gid = Date.now(); app.selection.forEach(i => i.groupId = gid); saveState(); };
         window.ungroupSelection = () => { app.selection.forEach(i => delete i.groupId); saveState(); };
-        window.triggerGroupRecolor = () => { if (!app.selection.length) return; const newColor = app.colorString; app.selection.forEach(item => { if (item.points) item.color = newColor; if (item.content !== undefined) window.updateNoteColor(newColor, item.id); }); requestRender(); saveState(); document.getElementById('sel-context-menu').style.display = 'none'; };
+        window.triggerGroupRecolor = () => {
+            if (!app.selection.length) return;
+            const newColor = app.colorString;
+            app.selection.forEach(item => {
+                if (item.points) {
+                    item.color = newColor; // Strokes
+                }
+                if (item.content !== undefined) {
+                    item.color = newColor; // Notes state
+                    window.updateNoteColor(newColor, item.id); // Notes UI
+                }
+                // Future: Shape fill/stroke
+            });
+            requestRender();
+            saveState();
+            document.getElementById('sel-context-menu').style.display = 'none';
+        };
         window.openImgAdjust = () => { const img = app.selection.find(i => i.src); if (!img) return; const f = img.filters || { hue: 0, sat: 100, con: 100 }; document.getElementById('adj-hue').value = f.hue; document.getElementById('adj-sat').value = f.sat; document.getElementById('adj-con').value = f.con || 100; document.getElementById('img-adjust-modal').style.display = 'flex'; const preview = () => { app.tempImgAdjust = { hue: document.getElementById('adj-hue').value, sat: document.getElementById('adj-sat').value, con: document.getElementById('adj-con').value }; img.filters = app.tempImgAdjust; requestRender(); }; document.getElementById('adj-hue').oninput = preview; document.getElementById('adj-sat').oninput = preview; document.getElementById('adj-con').oninput = preview; };
         window.closeImgAdjust = (apply) => { document.getElementById('img-adjust-modal').style.display = 'none'; const img = app.selection.find(i => i.src); if (img && !apply) { /* Reset logic omitted */ } saveState(); };
         window.moveLayer = (id, dir) => { const idx = app.layers.findIndex(l => l.id === id); if ((dir === 1 && idx === app.layers.length - 1) || (dir === -1 && idx === 0)) return; const temp = app.layers[idx]; app.layers[idx] = app.layers[idx + dir]; app.layers[idx + dir] = temp; renderLayerList(); requestRender(); saveState(); };
@@ -2402,12 +2512,14 @@
             app.isSelecting = false; app.selectionPath = [];
             if (t !== 'eyedropper') document.querySelector('.ps-eyedropper-btn').classList.remove('active');
             updateToolUI();
+            if (t === 'select') syncUIToSelection();
         };
 
         // Replaced by native picker logic
         window.updateMainColor = (hex) => {
             app.colorString = hex;
-            document.getElementById('color-indicator').style.backgroundColor = hex;
+            const ind = document.getElementById('color-indicator');
+            if (ind) ind.style.backgroundColor = hex;
             const rgb = hexToRgb(hex);
             if (rgb) {
                 app.hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
@@ -2416,6 +2528,7 @@
                 window.triggerGroupRecolor();
             }
         };
+
 
         window.toggleColorPicker = () => {
             document.getElementById('native-color-picker').click();
@@ -2524,7 +2637,7 @@
 
         document.getElementById('option-slider').oninput = (e) => {
             if (app.mode === 'magic-wand') app.magicWand.tolerance = parseInt(e.target.value);
-            else if (app.mode === 'select' && app.selection.length > 0) {
+            else if (app.selection.length > 0 && app.selection.some(i => i.points)) {
                 const val = parseInt(e.target.value);
                 app.selection.forEach(item => {
                     if (item.points) item.size = val;
@@ -2539,7 +2652,7 @@
             }
         };
         document.getElementById('option-slider').onchange = (e) => {
-            if (app.mode === 'select' && app.selection.some(i => i.points)) saveState();
+            if (app.selection.length > 0 && app.selection.some(i => i.points)) saveState();
         };
 
 
