@@ -2233,6 +2233,63 @@
             }
         }
 
+        // Paste Event for External Images
+        window.addEventListener('paste', (e) => {
+            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            let imageItem = null;
+
+            // Prioritize images
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    imageItem = items[i];
+                    break;
+                }
+            }
+
+            if (imageItem) {
+                e.preventDefault();
+                const blob = imageItem.getAsFile();
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const id = Date.now();
+                        // Center in view
+                        const cx = (canvas.width / 2 - app.camera.x) / app.camera.zoom;
+                        const cy = (canvas.height / 2 - app.camera.y) / app.camera.zoom;
+
+                        // Limit initial size if too huge
+                        let w = img.naturalWidth;
+                        let h = img.naturalHeight;
+                        const maxW = 500 / app.camera.zoom;
+                        if (w > maxW) { const r = maxW / w; w *= r; h *= r; }
+
+                        const newObj = {
+                            id: id,
+                            x: cx - w / 2,
+                            y: cy - h / 2,
+                            w: w,
+                            h: h,
+                            src: event.target.result,
+                            imgElement: img,
+                            layerId: getTargetLayerId('image'),
+                            filters: { hue: 0, sat: 100, con: 100 }
+                        };
+                        app.images.push(newObj);
+                        clearSelection();
+                        addToSelection(newObj);
+                        updateTransformBox();
+                        saveState();
+                        requestRender();
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(blob);
+            }
+        });
+
         // Keys
         window.addEventListener('keydown', (e) => {
             if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
@@ -2426,8 +2483,17 @@
                     };
 
                     txt.oninput = (e) => { note.content = e.target.value; txt.style.height = 'auto'; txt.style.height = txt.scrollHeight + 'px'; };
-                    txt.onkeydown = (e) => { if (e.key === 'Escape') { txt.blur(); } }; // Blur on Escape
+                    txt.onkeydown = (e) => {
+                        if (e.key === 'Escape') {
+                            txt.blur();
+                        }
+                    };
                     txt.onblur = (e) => {
+                        // Keep editing if clicking note controls
+                        if (e.relatedTarget && (e.relatedTarget.closest('.note-header') || e.relatedTarget.closest('.font-select') || e.relatedTarget.closest('.note-input-num') || e.relatedTarget.closest('.note-input-color'))) {
+                            // retain editing class, but focus is lost to the input.
+                            return;
+                        }
                         txt.classList.remove('editing');
                         if (!note.content || note.content.trim() === '') { deleteNote(note.id); }
                     };
@@ -2463,9 +2529,30 @@
                     });
                     try { lucide.createIcons(); } catch (e) { }
                 }
-                const sx = note.x * app.camera.zoom + app.camera.x;
-                const sy = note.y * app.camera.zoom + app.camera.y;
-                const rot = note.rotation || 0;
+                let sx = note.x * app.camera.zoom + app.camera.x;
+                let sy = note.y * app.camera.zoom + app.camera.y;
+                let rot = note.rotation || 0;
+
+                // Visual Rotation during drag
+                if (app.selection.includes(note) && app.isTransforming && app.activeHandle === 'rot' && app.selectionRotation) {
+                    const center = app.transformSnapshot.center;
+                    const cx = center.x;
+                    const cy = center.y;
+                    const angle = app.selectionRotation;
+
+                    // Rotate world pos around center
+                    const dx = note.x - cx;
+                    const dy = note.y - cy;
+                    const cos = Math.cos(angle);
+                    const sin = Math.sin(angle);
+                    const nx = cx + dx * cos - dy * sin;
+                    const ny = cy + dx * sin + dy * cos;
+
+                    sx = nx * app.camera.zoom + app.camera.x;
+                    sy = ny * app.camera.zoom + app.camera.y;
+                    rot += angle;
+                }
+
                 el.style.transform = `translate(${sx}px, ${sy}px) scale(${app.camera.zoom}) rotate(${rot}rad)`;
                 // Fix anchor point for rotation if needed, default is center? No, 0 0 usually.
                 // We rotate around center in logic, so we might need to adjust origin or translate
@@ -2636,9 +2723,9 @@
         function getTargetLayerId(type) { let targetName = ''; if (type === 'stroke') targetName = '画笔'; else if (type === 'image') targetName = '图片'; else if (type === 'text') targetName = '文字'; const target = app.layers.find(l => l.name === targetName); if (target && !target.locked) return target.id; return app.activeLayerId; }
 
         // --- GLOBAL WINDOW BINDINGS ---
-        window.updateFont = (size, id) => { const n = app.notes.find(x => x.id === id); if (n) { n.fontSize = size; requestRender(); saveState(); } };
-        window.updateFontFamily = (font, id) => { const n = app.notes.find(x => x.id === id); if (n) { n.font = font; requestRender(); saveState(); } };
-        window.updateNoteColor = (color, id) => { const n = app.notes.find(x => x.id === id); if (n) { n.color = color; requestRender(); saveState(); } };
+        window.updateFont = (size, id) => { const n = app.notes.find(x => x.id === id); if (n) { n.fontSize = size; updateNotesDOM(); requestRender(); saveState(); } };
+        window.updateFontFamily = (font, id) => { const n = app.notes.find(x => x.id === id); if (n) { n.font = font; updateNotesDOM(); requestRender(); saveState(); } };
+        window.updateNoteColor = (color, id) => { const n = app.notes.find(x => x.id === id); if (n) { n.color = color; updateNotesDOM(); requestRender(); saveState(); } };
         window.deleteNote = (id) => { app.notes = app.notes.filter(x => x.id !== id); clearSelection(); requestRender(); saveState(); };
         window.deleteSelection = () => {
             const unlockedSelection = app.selection.filter(item => { const l = app.layers.find(ly => ly.id === item.layerId); return l && !l.locked; });
@@ -2720,6 +2807,7 @@
             reader.readAsDataURL(file); el.value = '';
         };
         window.updateBgScale = (val) => { app.background.scale = val; updateBodyBackground(); };
+        window.updateBgColor = (val) => { app.background.color = val; updateBodyBackground(); saveState(); };
         window.clearBgTexture = () => { app.background.texture = null; updateBodyBackground(); };
         function updateBodyBackground() {
             if (app.background.texture) {
@@ -2864,6 +2952,15 @@
                 app.images.forEach(img => {
                     if (img.layerId === layer.id && img.imgElement?.complete) {
                         bufferCtx.save();
+                        // Visual Rotation during drag
+                        if (app.selection.includes(img) && app.isTransforming && app.activeHandle === 'rot' && app.selectionRotation) {
+                            const center = app.transformSnapshot.center;
+                            bufferCtx.translate(center.x, center.y);
+                            bufferCtx.rotate(app.selectionRotation);
+                            bufferCtx.translate(-center.x, -center.y);
+                        }
+
+                        bufferCtx.save();
                         // Apply Rotation
                         if (img.rotation) {
                             const cx = img.x + img.w / 2;
@@ -2880,7 +2977,37 @@
                     }
                 });
                 bufferCtx.lineCap = 'round'; bufferCtx.lineJoin = 'round';
-                app.strokes.forEach(stroke => { if (stroke.layerId !== layer.id) return; bufferCtx.save(); if (stroke.isEraser) { bufferCtx.globalCompositeOperation = 'destination-out'; bufferCtx.strokeStyle = 'rgba(0,0,0,1)'; bufferCtx.lineWidth = stroke.size; drawStroke(bufferCtx, stroke); } else if (stroke.type === 'fill') { bufferCtx.fillStyle = stroke.color; bufferCtx.beginPath(); if (stroke.points.length > 0) { bufferCtx.moveTo(stroke.points[0].x, stroke.points[0].y); for (let i = 1; i < stroke.points.length; i++) bufferCtx.lineTo(stroke.points[i].x, stroke.points[i].y); bufferCtx.closePath(); bufferCtx.fill(); } } else if (stroke.type === 'watercolor') { bufferCtx.globalCompositeOperation = 'multiply'; bufferCtx.globalAlpha = 0.5 * (layer.opacity || 1); bufferCtx.strokeStyle = stroke.color; bufferCtx.lineWidth = stroke.size; drawStroke(bufferCtx, stroke); } else if (stroke.type === 'pencil') { bufferCtx.strokeStyle = stroke.color; bufferCtx.lineWidth = stroke.size; bufferCtx.globalAlpha = 0.8 * (layer.opacity || 1); bufferCtx.setLineDash([2, 4]); bufferCtx.lineCap = 'butt'; bufferCtx.shadowBlur = 1; bufferCtx.shadowColor = stroke.color; drawStroke(bufferCtx, stroke); bufferCtx.setLineDash([4, 2]); bufferCtx.globalAlpha = 0.4 * (layer.opacity || 1); drawStroke(bufferCtx, stroke); } else { bufferCtx.strokeStyle = stroke.color; bufferCtx.lineWidth = stroke.size; drawStroke(bufferCtx, stroke); } bufferCtx.restore(); });
+                app.strokes.forEach(stroke => {
+                    if (stroke.layerId !== layer.id) return;
+                    bufferCtx.save();
+
+                    // Visual Rotation during drag
+                    if (app.selection.includes(stroke) && app.isTransforming && app.activeHandle === 'rot' && app.selectionRotation) {
+                        const center = app.transformSnapshot.center;
+                        bufferCtx.translate(center.x, center.y);
+                        bufferCtx.rotate(app.selectionRotation);
+                        bufferCtx.translate(-center.x, -center.y);
+                    }
+
+                    if (stroke.isEraser) {
+                        bufferCtx.globalCompositeOperation = 'destination-out'; bufferCtx.strokeStyle = 'rgba(0,0,0,1)'; bufferCtx.lineWidth = stroke.size; drawStroke(bufferCtx, stroke);
+                    } else if (stroke.type === 'fill') {
+                        bufferCtx.fillStyle = stroke.color; bufferCtx.beginPath();
+                        if (stroke.points.length > 0) {
+                            bufferCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
+                            for (let i = 1; i < stroke.points.length; i++) bufferCtx.lineTo(stroke.points[i].x, stroke.points[i].y);
+                            bufferCtx.closePath(); bufferCtx.fill();
+                        }
+                    } else if (stroke.type === 'watercolor') {
+                        bufferCtx.globalCompositeOperation = 'multiply'; bufferCtx.globalAlpha = 0.5 * (layer.opacity || 1); bufferCtx.strokeStyle = stroke.color; bufferCtx.lineWidth = stroke.size; drawStroke(bufferCtx, stroke);
+                    } else if (stroke.type === 'pencil') {
+                        bufferCtx.strokeStyle = stroke.color; bufferCtx.lineWidth = stroke.size; bufferCtx.globalAlpha = 0.8 * (layer.opacity || 1); bufferCtx.setLineDash([2, 4]); bufferCtx.lineCap = 'butt'; bufferCtx.shadowBlur = 1; bufferCtx.shadowColor = stroke.color; drawStroke(bufferCtx, stroke);
+                        bufferCtx.setLineDash([4, 2]); bufferCtx.globalAlpha = 0.4 * (layer.opacity || 1); drawStroke(bufferCtx, stroke);
+                    } else {
+                        bufferCtx.strokeStyle = stroke.color; bufferCtx.lineWidth = stroke.size; drawStroke(bufferCtx, stroke);
+                    }
+                    bufferCtx.restore();
+                });
                 bufferCtx.restore(); ctx.drawImage(bufferCanvas, 0, 0);
             });
 
