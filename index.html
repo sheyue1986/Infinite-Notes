@@ -53,7 +53,14 @@
             display: none !important;
         }
 
-        /* Ensure cursor hides in Zen Mode while drawing if desired, or keep generic */
+        /* Cursor Styles */
+        body.cursor-zoom {
+            cursor: zoom-in;
+        }
+
+        body.cursor-zoom-active {
+            cursor: ns-resize;
+        }
 
         /* Notes */
         .note-element {
@@ -803,6 +810,8 @@
             <div class="menu-dropdown">
                 <div class="menu-item" onclick="document.getElementById('psd-input').click()"><i data-lucide="upload"
                         size="14"></i> Open PSD (Ctrl+O)</div>
+                <div class="menu-item" onclick="saveAsHTML()"><i data-lucide="file-down" size="14"></i> Save Project
+                    (HTML)</div>
                 <div class="menu-item" onclick="savePSD()"><i data-lucide="download" size="14"></i> Save PSD (Ctrl+S)
                 </div>
                 <div class="menu-item" onclick="showExportDialog()"><i data-lucide="image" size="14"></i> Export Image
@@ -1044,6 +1053,7 @@
             mode: 'pen',
             lastBrushId: 'pen',
             brushIndex: 0,
+            zoomStartY: 0, zoomStartVal: 1, zoomStartWs: { x: 0, y: 0 }, isZooming: false, // Zoom Tool State
             hsv: { h: 0, s: 0, v: 0 },
             colorString: '#000000',
             toolSize: { pen: 3, pencil: 2, watercolor: 15, calligraphy: 5, eraser: 30, fill: 1 },
@@ -1543,6 +1553,16 @@
                 return;
             }
 
+            if (app.mode === 'zoom') {
+                app.isZooming = true;
+                app.zoomStartY = pos.sy; // Screen Y
+                app.zoomStartVal = app.camera.zoom;
+                // Cache World Position of the mouse start for centering
+                app.zoomStartWs = { x: pos.x, y: pos.y };
+                document.body.classList.add('cursor-zoom-active');
+                return;
+            }
+
             if (app.mode === 'magic-wand') {
                 magicWandSelect(pos.x, pos.y, e.shiftKey);
                 return;
@@ -1732,6 +1752,140 @@
                 return;
             }
 
+            if (app.isZooming) {
+                const dy = pos.sy - app.zoomStartY;
+                // Zoom Factor: Mouse Down = Zoom Out, Mouse Up = Zoom In?
+                // Photoshop: Right = In, Left = Out. 
+                // Let's do: Drag Right (dX) or Up (-dY) = In? 
+                // Standard scrubby zoom often behaves like: Drag Right/Down?
+                // Let's implement: Down = Zoom Out, Up = Zoom In (Screen space logic)
+                // Or: Mouse Move Delta. 
+                // Let's stick to user request: "Drag to magnify".
+                // Simple: (1 + dy * 0.01).
+
+                // Let's use dX for lateral movement if user prefers, but Y is common for 'scrubby' if vertical.
+                // Re-reading: "drag" usually implies left-right in Adobe mostly? 
+                // Let's try Right=Zoom In, Left=Zoom Out.
+                // Actually user didn't specify direction.
+                // Let's use Delta Y (Up = In, Down = Out) as it feels natural for values.
+                // But wait, "Pull down to zoom in" feels standard?
+                // Let's go with: Drag Right/Down = Zoom In. Left/Up = Zoom Out.
+
+                // Effective Zoom
+                const sensitivity = 0.005;
+                const delta = (pos.sx - app.lastPos.sx) + (pos.sy - app.lastPos.sy);
+                // Using instant delta is jittery. Use accumulate from start.
+
+                // New Approach:
+                // dy from start.
+                // If dy > 0 (Drag Down), Zoom In?
+                // Photoshop Scrubby: Drag Right = In. Drag Left = Out.
+                const totalDx = pos.sx - (app.zoomStartWs.x * app.zoomStartVal + app.camera.x); // Complex to reverse.
+                // Simpler: Just track screen delta from start.
+
+                // Let's use simple logic:
+                // New Zoom = StartZoom * (1 + delta * sense)
+
+                // dY based.
+                const dyTotal = pos.sy - app.zoomStartY;
+                // Drag Down (+y) -> Zoom In. Drag Up (-y) -> Zoom Out.
+
+                let targetZoom = app.zoomStartVal * (1 + dyTotal * 0.005);
+                targetZoom = Math.max(0.1, Math.min(5, targetZoom));
+
+                // Scale around the initial world point
+                // camX = screenX - worldX * newZoom
+                const startScreenX = app.zoomStartWs.x * app.zoomStartVal + app.camera.x; // approx reconstruction? 
+                // Wait, app.zoomStartWs is World Pos.
+                // We want that World Pos to stay at the Initial Screen Pos?
+                // Yes.
+                const initialScreenX = app.zoomStartWs.x * app.zoomStartVal + app.camera.x; // This assumes camera didn't change?
+                // No, we modify camera.
+                // We know Screen Coord of Start Click (let's reconstruct it, we didn't save it, but we saved pos.sx from start, wait we saved zoomStartY as sy)
+                // We need zoomStartS{x,y}.
+
+                // Correction: handlePointerDown did not save sx, only sy.
+                // Let's rely on zooming around center of screen if easier, OR
+                // Update: app definitions line 1043 added `zoomStartWs`.
+                // Actually I need the *screen* coordinates of the click too.
+                // Let's just use `pos`? No, pos moves.
+
+                // Actually, scrubby zoom usually anchors the click point.
+                // Let's approximate: 
+                // We anchor `app.zoomStartWs` (World) to... where?
+                // To the original screen location?
+                // Correct.
+                // But we don't have original screen X.
+                // I will add `zoomStartSx` to logic implicitly.
+                // Let's just use the current mouse position as the anchor? No, that drifts.
+
+                // REVISION: I will just zoom centered for now to avoid drift complexity without complete start pos.
+                // User requirement: "Zoom in/out". 
+                // Centered zoom is safe.
+
+                app.camera.zoom = targetZoom;
+
+                // Center Zoom logic:
+                // app.camera.x = canvas.width/2 - (canvas.width/2 - oldCamX) / oldZoom * newZoom
+                // This resets panning.
+
+                // Better: Zoom around the *current mouse*?
+                // Standard wheel zoom logic.
+                const mouseWorldX = (pos.sx - app.camera.x) / app.camera.zoom; // This is using new zoom... circular.
+
+                // Let's just update zoom.
+                // And center it?
+                // Let's use the standard wheel logic adaptation:
+                // Zoom around center of view.
+                const cx = canvas.width / 2;
+                const cy = canvas.height / 2;
+                const wx = (cx - app.camera.x) / app.zoomStartVal; // Center in World at start? No.
+                // This is getting complicated to do perfectly without start vars.
+                // Let's just look at `handleWheel`.
+                // it uses mouse position.
+
+                // Implementation:
+                // Update zoom.
+                // Keep the "clicked point" (app.zoomStartWs) at the same screen location? 
+                // We don't have screen X of start.
+                // Let's just zoom around the center of the screen.
+
+                const r = canvas.getBoundingClientRect();
+                const centerScreenWidth = r.width / 2;
+                const centerScreenHeight = r.height / 2;
+
+                const worldCenterX = (centerScreenWidth - app.camera.x) / (app.camera.zoom / targetZoom * app.zoomStartVal); // Approximate previous
+                // Actually, let's just do:
+                // app.camera.x = centerScreenWidth - (centerScreenWidth - app.camera.x) * (targetZoom / oldZoom);
+                // But we need persistent oldZoom.
+                // Let's use:
+                // app.camera.x = centerScreenWidth - worldCenterX_AtStart * targetZoom
+
+                // Let's Revert to Simple: Zoom around center.
+                // centerWorldX = (centerScreenWidth - oldCamX) / oldZoom
+                // newCamX = centerScreenWidth - centerWorldX * newZoom
+
+                // We don't have oldCamX/oldZoom frame-by-frame easily unless we track.
+                // But we have app.zoomStartVal and app.isZooming.
+                // Let's assume camera center passed through world point X at start?
+                // Let's just use the current camera center as anchor.
+
+                const oldZ = app.camera.zoom;
+                app.camera.zoom = targetZoom;
+
+                const fac = targetZoom / oldZ;
+                const bgW = canvas.width;
+                const bgH = canvas.height;
+
+                // Zoom towards center
+                app.camera.x = bgW / 2 - (bgW / 2 - app.camera.x) * fac;
+                app.camera.y = bgH / 2 - (bgH / 2 - app.camera.y) * fac;
+
+                document.getElementById('zoom-text').innerText = Math.round(targetZoom * 100) + '%';
+                requestRender();
+                return;
+            }
+
             if (app.isTransforming && app.transformSnapshot) {
                 const dx = pos.x - app.transformSnapshot.startPos.x;
                 const dy = pos.y - app.transformSnapshot.startPos.y;
@@ -1900,6 +2054,11 @@
         }
 
         function handlePointerUp(e) {
+            if (app.isZooming) {
+                app.isZooming = false;
+                document.body.classList.remove('cursor-zoom-active');
+                return;
+            }
             if (app.isPanning) { app.isPanning = false; updateToolUI(); return; }
             if (app.isDraggingVP >= 0) { app.isDraggingVP = -1; return; }
             if (app.isDraggingSlider) { app.isDraggingSlider = false; } // Reset slider flag
@@ -2328,6 +2487,7 @@
                 }
 
                 // Exit all Modals/Modes
+                // Exit all Modals/Modes
                 document.getElementById('export-modal').style.display = 'none';
                 document.getElementById('img-adjust-modal').style.display = 'none';
                 document.getElementById('ps-picker').classList.remove('show');
@@ -2335,7 +2495,17 @@
                 if (app.selection.length > 0 || app.pixelSelection) clearSelection();
                 app.isTransforming = false;
                 app.isDrawing = false;
-                window.setTool('select');
+
+                if (app.mode === 'zoom') {
+                    window.setTool('select');
+                } else {
+                    window.setTool('select');
+                }
+            }
+
+            // Zoom Tool Shortcut
+            if (e.key.toLowerCase() === 'z') {
+                window.setTool('zoom');
             }
 
             if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -2766,7 +2936,248 @@
 
         window.performExport = () => { const w = parseInt(document.getElementById('exp-w').value); const h = parseInt(document.getElementById('exp-h').value); const fmt = document.getElementById('exp-fmt').value; const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h; const ctx = canvas.getContext('2d'); if (app.background.texture) { const pat = ctx.createPattern(app.background.texture, 'repeat'); ctx.fillStyle = pat; ctx.save(); ctx.scale(app.background.scale / 100, app.background.scale / 100); ctx.fillRect(0, 0, w / (app.background.scale / 100), h / (app.background.scale / 100)); ctx.restore(); } else { ctx.fillStyle = app.background.color; ctx.fillRect(0, 0, w, h); } const bounds = getAllItemsAABB(); const scaleX = w / (bounds.w || 1); const scaleY = h / (bounds.h || 1); const scale = Math.min(scaleX, scaleY) * 0.9; const centerX = w / 2; const centerY = h / 2; const contentCX = bounds.x + bounds.w / 2; const contentCY = bounds.y + bounds.h / 2; ctx.translate(centerX, centerY); ctx.scale(scale, scale); ctx.translate(-contentCX, -contentCY); const sortedLayers = [...app.layers]; sortedLayers.forEach(layer => { if (!layer.visible) return; ctx.globalAlpha = layer.opacity !== undefined ? layer.opacity : 1.0; app.images.forEach(img => { if (img.layerId === layer.id && img.imgElement) ctx.drawImage(img.imgElement, img.x, img.y, img.w, img.h); }); app.strokes.forEach(stroke => { if (stroke.layerId === layer.id) { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.save(); if (stroke.isEraser) { /* skip */ } else if (stroke.type === 'fill') { ctx.fillStyle = stroke.color; ctx.beginPath(); stroke.points.forEach((p, i) => i == 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)); ctx.fill(); } else if (stroke.type === 'pencil') { ctx.strokeStyle = stroke.color; ctx.lineWidth = stroke.size; ctx.globalAlpha = 0.8 * (layer.opacity || 1); ctx.setLineDash([2, 4]); ctx.shadowBlur = 1; ctx.shadowColor = stroke.color; drawStroke(ctx, stroke); ctx.setLineDash([4, 2]); ctx.globalAlpha = 0.4 * (layer.opacity || 1); drawStroke(ctx, stroke); } else { ctx.strokeStyle = stroke.color; ctx.lineWidth = stroke.size; drawStroke(ctx, stroke); } ctx.restore(); } }); app.notes.forEach(note => { if (note.layerId === layer.id && note.content) { ctx.save(); ctx.font = `${note.fontSize}px ${note.font}`; ctx.fillStyle = note.color || '#000000'; ctx.textBaseline = 'top'; const lines = note.content.split('\n'); const lineHeight = note.fontSize * 1.5; lines.forEach((line, i) => { ctx.fillText(line, note.x, note.y + i * lineHeight); }); ctx.restore(); } }); ctx.globalAlpha = 1.0; }); const data = canvas.toDataURL(fmt, 0.9); const a = document.createElement('a'); a.href = data; a.download = `InfiniteNote_Export.${fmt.split('/')[1]}`; a.click(); document.getElementById('export-modal').style.display = 'none'; };
 
-        window.savePSD = function () { if (typeof agPsd === 'undefined') { alert('PSD Library loading...'); return; } const width = 2000; const height = 1500; const psdChildren = []; const bgCanvas = document.createElement('canvas'); bgCanvas.width = width; bgCanvas.height = height; const bgCtx = bgCanvas.getContext('2d'); if (app.background.texture) { const pat = bgCtx.createPattern(app.background.texture, 'repeat'); bgCtx.fillStyle = pat; bgCtx.save(); bgCtx.scale(app.background.scale / 100, app.background.scale / 100); bgCtx.fillRect(0, 0, width / (app.background.scale / 100), height / (app.background.scale / 100)); bgCtx.restore(); } else { bgCtx.fillStyle = app.background.color; bgCtx.fillRect(0, 0, width, height); } psdChildren.push({ name: 'Background', canvas: bgCanvas }); const sortedLayers = [...app.layers].reverse(); sortedLayers.forEach(layer => { const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d'); ctx.globalAlpha = layer.opacity !== undefined ? layer.opacity : 1.0; app.images.forEach(img => { if (img.layerId === layer.id && img.imgElement) ctx.drawImage(img.imgElement, img.x, img.y, img.w, img.h); }); app.strokes.forEach(stroke => { if (stroke.layerId === layer.id) { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.save(); if (stroke.isEraser) { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = '#000'; ctx.lineWidth = stroke.size; drawStroke(ctx, stroke); } else if (stroke.type === 'fill') { ctx.fillStyle = stroke.color; ctx.beginPath(); stroke.points.forEach((p, i) => i == 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)); ctx.fill(); } else { ctx.strokeStyle = stroke.color; ctx.lineWidth = stroke.size; drawStroke(ctx, stroke); } ctx.restore(); } }); psdChildren.push({ name: layer.name, hidden: !layer.visible, opacity: layer.opacity !== undefined ? layer.opacity : 1.0, canvas: canvas }); }); const psd = { width: width, height: height, children: psdChildren }; const data = agPsd.writePsd(psd); const blob = new Blob([data], { type: 'application/octet-stream' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'InfiniteNote.psd'; a.click(); };
+        window.getCompleteState = () => {
+            return {
+                s: app.strokes,
+                n: app.notes,
+                i: app.images.map(img => {
+                    // Create clean object without DOM elements
+                    const { imgElement, ...rest } = img;
+                    return rest;
+                }),
+                l: app.layers,
+                ali: app.activeLayerId, // Active Layer ID
+                bg: {
+                    color: app.background.color,
+                    scale: app.background.scale,
+                    textureSrc: app.background.texture ? app.background.texture.src : null
+                },
+                sw: app.swatches,
+                g: app.guides
+            };
+        };
+
+        window.loadCompleteState = (state) => {
+            try {
+                if (!state) return;
+                app.strokes = state.s || [];
+                app.notes = state.n || [];
+                app.layers = state.l || [];
+                app.activeLayerId = state.ali || 'layer-stroke';
+
+                // Restore Images
+                app.images = (state.i || []).map(raw => {
+                    const img = new Image();
+                    img.onload = () => requestRender();
+                    img.src = raw.src;
+                    return { ...raw, imgElement: img };
+                });
+
+                // Restore Background
+                if (state.bg) {
+                    app.background.color = state.bg.color || '#f2f2f7';
+                    app.background.scale = state.bg.scale || 100;
+                    if (state.bg.textureSrc) {
+                        const img = new Image();
+                        img.onload = () => { app.background.texture = img; updateBodyBackground(); requestRender(); };
+                        img.src = state.bg.textureSrc;
+                    } else {
+                        app.background.texture = null;
+                        updateBodyBackground();
+                    }
+                }
+
+                // Restore Swatches
+                if (state.sw) {
+                    app.swatches = state.sw;
+                    if (typeof renderSwatches === 'function') renderSwatches();
+                }
+
+                // Restore Guides
+                if (state.g) {
+                    app.guides = state.g;
+                }
+
+                renderLayerList();
+                requestRender();
+                setTimeout(updateNotesDOM, 100); // Ensure DOM is refreshed
+            } catch (e) {
+                console.error("State Load Error", e);
+                alert("Failed to load project state: " + e.message);
+            }
+        };
+
+        window.saveAsHTML = () => {
+            try {
+                const state = window.getCompleteState();
+                const stateJson = JSON.stringify(state);
+
+                // Clone the current document
+                const clone = document.documentElement.cloneNode(true);
+
+                // Clean up dynamic elements
+                const noteElements = clone.querySelectorAll('.note-element');
+                noteElements.forEach(el => el.remove());
+
+                const layerItems = clone.querySelectorAll('.layer-item');
+                layerItems.forEach(el => el.remove());
+
+                // Remove any existing inserted script
+                const existingScript = clone.querySelector('#infinite-state-data');
+                if (existingScript) existingScript.remove();
+
+                // Inject State Script
+                const scriptArgs = document.createElement('script');
+                scriptArgs.id = 'infinite-state-data';
+                scriptArgs.textContent = `window.INITIAL_STATE = ${stateJson};`;
+
+                // Prepend to head or body
+                const head = clone.querySelector('head');
+                if (head) head.insertBefore(scriptArgs, head.firstChild);
+                else clone.querySelector('body').appendChild(scriptArgs);
+
+                // Get full HTML
+                const htmlContent = clone.outerHTML; // This includes <!DOCTYPE html> usually not, but outerHTML of html tag does.
+                const fullHtml = '<!DOCTYPE html>\n' + htmlContent;
+
+                const blob = new Blob([fullHtml], { type: 'text/html' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `InfiniteNote_Project_${Date.now()}.html`;
+                a.click();
+            } catch (e) {
+                alert("Save Failed: " + e.message);
+            }
+        };
+
+        window.savePSD = function () {
+            if (typeof agPsd === 'undefined') { alert('PSD Library loading...'); return; }
+
+            const bounds = getAllItemsAABB();
+            const padding = 100; // Padding around content
+            // Ensure positive dimensions
+            const width = Math.max(1, Math.ceil(bounds.w + padding * 2));
+            const height = Math.max(1, Math.ceil(bounds.h + padding * 2));
+
+            // Offset to shift content to (padding, padding) - bounds.min
+            const offsetX = -bounds.x + padding;
+            const offsetY = -bounds.y + padding;
+
+            const psdChildren = [];
+
+            // Background Canvas
+            const bgCanvas = document.createElement('canvas');
+            bgCanvas.width = width;
+            bgCanvas.height = height;
+            const bgCtx = bgCanvas.getContext('2d');
+
+            if (app.background.texture) {
+                const pat = bgCtx.createPattern(app.background.texture, 'repeat');
+                bgCtx.fillStyle = pat;
+                bgCtx.save();
+                bgCtx.scale(app.background.scale / 100, app.background.scale / 100);
+                // Fill huge area relative to pattern, but we just need to fill canvas
+                // Pattern starts at 0,0 usually.
+                bgCtx.fillRect(0, 0, width / (app.background.scale / 100), height / (app.background.scale / 100));
+                bgCtx.restore();
+            } else {
+                bgCtx.fillStyle = app.background.color;
+                bgCtx.fillRect(0, 0, width, height);
+            }
+            psdChildren.push({ name: 'Background', canvas: bgCanvas });
+
+            const sortedLayers = [...app.layers].reverse();
+            sortedLayers.forEach(layer => {
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+
+                // Apply global offset for this viewport
+                ctx.translate(offsetX, offsetY);
+
+                ctx.globalAlpha = layer.opacity !== undefined ? layer.opacity : 1.0;
+
+                app.images.forEach(img => {
+                    if (img.layerId === layer.id && img.imgElement) {
+                        ctx.save();
+                        // Handle rotation if present (assuming existing logic structure)
+                        if (img.rotation) {
+                            const cx = img.x + img.w / 2;
+                            const cy = img.y + img.h / 2;
+                            ctx.translate(cx, cy);
+                            ctx.rotate(img.rotation);
+                            ctx.translate(-cx, -cy);
+                        }
+                        ctx.drawImage(img.imgElement, img.x, img.y, img.w, img.h);
+                        ctx.restore();
+                    }
+                });
+
+                app.strokes.forEach(stroke => {
+                    if (stroke.layerId === layer.id) {
+                        ctx.lineCap = 'round';
+                        ctx.lineJoin = 'round';
+                        ctx.save();
+                        if (stroke.isEraser) {
+                            ctx.globalCompositeOperation = 'destination-out';
+                            ctx.strokeStyle = '#000';
+                            ctx.lineWidth = stroke.size;
+                            drawStroke(ctx, stroke);
+                        } else if (stroke.type === 'fill') {
+                            ctx.fillStyle = stroke.color;
+                            ctx.beginPath();
+                            stroke.points.forEach((p, i) => i == 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+                            ctx.fill();
+                        } else if (stroke.type === 'pencil') {
+                            ctx.strokeStyle = stroke.color;
+                            ctx.lineWidth = stroke.size;
+                            ctx.globalAlpha = 0.8 * (layer.opacity || 1);
+                            ctx.setLineDash([2, 4]);
+                            ctx.shadowBlur = 1;
+                            ctx.shadowColor = stroke.color;
+                            drawStroke(ctx, stroke);
+                            ctx.setLineDash([4, 2]);
+                            ctx.globalAlpha = 0.4 * (layer.opacity || 1);
+                            drawStroke(ctx, stroke);
+                        } else {
+                            ctx.strokeStyle = stroke.color;
+                            ctx.lineWidth = stroke.size;
+                            drawStroke(ctx, stroke);
+                        }
+                        ctx.restore();
+                    }
+                });
+
+                // Render Notes on layer
+                app.notes.forEach(note => {
+                    if (note.layerId === layer.id && note.content) {
+                        ctx.save();
+                        ctx.font = `${note.fontSize}px ${note.font}`;
+                        ctx.fillStyle = note.color || '#000000';
+                        ctx.textBaseline = 'top';
+                        // Handle multiline
+                        const lines = note.content.split('\n');
+                        const lineHeight = note.fontSize * 1.5;
+                        lines.forEach((line, i) => {
+                            // Note: note.x is world space? Yes.
+                            ctx.fillText(line, note.x, note.y + i * lineHeight);
+                        });
+                        ctx.restore();
+                    }
+                });
+
+                psdChildren.push({ name: layer.name, hidden: !layer.visible, opacity: layer.opacity !== undefined ? layer.opacity : 1.0, canvas: canvas });
+            });
+
+            const psd = { width: width, height: height, children: psdChildren };
+            const data = agPsd.writePsd(psd);
+            const blob = new Blob([data], { type: 'application/octet-stream' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'InfiniteNote.psd';
+            a.click();
+        };
 
         window.setTool = function (t) {
             const isBrush = BRUSH_TYPES.find(b => b.id === t);
@@ -2774,10 +3185,19 @@
 
             if (isBrush) { app.mode = t; app.lastBrushId = t; app.brushIndex = BRUSH_TYPES.findIndex(b => b.id === t); app.showOptionSlider = !app.showOptionSlider; }
             else if (isSelect) { app.mode = t; app.showOptionSlider = t === 'magic-wand'; }
-            else if (t === 'eraser' || t === 'eyedropper' || t === 'text' || t === 'hand' || t === 'cut-lasso') { app.mode = t; app.showOptionSlider = t === 'eraser'; if (t !== 'select') clearSelection(); }
+            else if (t === 'eraser' || t === 'eyedropper' || t === 'text' || t === 'hand' || t === 'cut-lasso' || t === 'zoom') {
+                app.mode = t;
+                app.showOptionSlider = t === 'eraser';
+                if (t !== 'select') clearSelection();
+            }
 
             app.isSelecting = false; app.selectionPath = [];
             if (t !== 'eyedropper') document.querySelector('.ps-eyedropper-btn').classList.remove('active');
+
+            // Cursor Update
+            document.body.classList.remove('cursor-zoom');
+            if (t === 'zoom') document.body.classList.add('cursor-zoom');
+
             updateToolUI();
             if (t === 'select') syncUIToSelection();
         };
@@ -3326,11 +3746,17 @@
         };
 
         // Final Init
+        // Final Init
         window.setTool('pen');
-        renderLayerList();
-        renderSwatches();
-        saveState();
-        requestRender();
+
+        if (window.INITIAL_STATE) {
+            window.loadCompleteState(window.INITIAL_STATE);
+        } else {
+            renderLayerList();
+            renderSwatches();
+            saveState();
+            requestRender();
+        }
 
         // --- DRAGGABLE WINDOW LOGIC ---
         function makeDraggable(el, handle) {
